@@ -81,6 +81,10 @@ namespace GoHome.Web.Data.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("INTEGER");
 
+                    b.Property<string>("BoardingCode")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
                     b.Property<int?>("DriverUserId")
                         .HasColumnType("INTEGER");
 

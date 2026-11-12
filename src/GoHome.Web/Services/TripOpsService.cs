@@ -9,6 +9,40 @@ namespace GoHome.Web.Services;
 public class TripOpsService(
     AppDbContext db, TripService trips, IClock clock, AuditService audit, INotifier notifier, IOptions<PilotOptions> options)
 {
+    /// <summary>Окно, в котором принимается посадка по QR: от −30 до +60 минут к времени посадки пассажира.</summary>
+    public static readonly TimeSpan BoardEarly = TimeSpan.FromMinutes(30), BoardLate = TimeSpan.FromMinutes(60);
+
+    /// <summary>
+    /// Посадка по QR-наклейке в машине. Рейс определяется по машине и текущему времени;
+    /// принимается только для пассажира из списка рейса и только в окне вокруг его времени посадки.
+    /// </summary>
+    public async Task<OpResult> BoardByCodeAsync(int userId, string code, string actor)
+    {
+        var route = await db.Routes.Include(r => r.Car)
+            .FirstOrDefaultAsync(r => r.IsActive && r.Car.BoardingCode == code && code != "");
+        if (route is null) return OpResult.Fail("QR-код не распознан. Попросите водителя отметить вас вручную.");
+
+        var now = clock.LocalNow;
+        var today = clock.Today;
+        foreach (var dir in Enum.GetValues<Direction>())
+        {
+            var roster = await trips.GetRosterAsync(route.Id, today, dir);
+            if (!roster.Runs) continue;
+            var entry = roster.Riding.FirstOrDefault(e => e.UserId == userId);
+            if (entry is null) continue;
+
+            var boardAt = dir == Direction.Morning ? entry.Stop.MorningTime : roster.DepartureTime ?? entry.Stop.EveningTime;
+            var at = today.ToDateTime(boardAt);
+            if (now < at - BoardEarly || now > at + BoardLate) continue;
+
+            if (entry.Result == RideResult.Boarded)
+                return OpResult.Success($"Посадка уже отмечена: {route.Name}, {WorkCalendar.Format(dir)}.");
+            var r = await MarkRideAsync(route.Id, today, dir, userId, RideResult.Boarded, userId, actor);
+            return r.Ok ? OpResult.Success($"Посадка отмечена: {route.Name}, {WorkCalendar.Format(dir)}. Хорошей дороги!") : r;
+        }
+        return OpResult.Fail($"Сейчас у вас нет поездки на «{route.Name}». Отметиться можно за 30 минут до посадки и в течение часа после.");
+    }
+
     public async Task<OpResult> MarkRideAsync(int routeId, DateOnly date, Direction dir, int userId, RideResult result, int? actorUserId, string actor)
     {
         if (date > clock.Today) return OpResult.Fail("Этот рейс ещё не состоялся.");

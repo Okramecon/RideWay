@@ -13,6 +13,7 @@
       <PrivateAssets>all</PrivateAssets>
     </PackageReference>
     <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="10.0.15" />
+    <PackageReference Include="QRCoder" Version="1.8.1" />
     <Using Include="GoHome.Web.Domain.Route" Alias="Route" />
     <PackageReference Include="Telegram.Bot" Version="22.10.4" />
   </ItemGroup>

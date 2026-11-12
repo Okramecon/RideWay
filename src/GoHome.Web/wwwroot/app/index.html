@@ -1,0 +1,404 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+<title>RideWay</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>
+  :root {
+    --bg: var(--tg-theme-bg-color, #ffffff);
+    --bg2: var(--tg-theme-secondary-bg-color, #f1f2f5);
+    --section: var(--tg-theme-section-bg-color, #ffffff);
+    --text: var(--tg-theme-text-color, #111111);
+    --hint: var(--tg-theme-hint-color, #8a8f98);
+    --link: var(--tg-theme-link-color, #2481cc);
+    --accent: var(--tg-theme-button-color, #2481cc);
+    --accent-text: var(--tg-theme-button-text-color, #ffffff);
+    --danger: var(--tg-theme-destructive-text-color, #e5484d);
+    --ok: #2ea043;
+    --sep: color-mix(in srgb, var(--hint) 25%, transparent);
+    --radius: 14px;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; background: var(--bg2); color: var(--text);
+    font: 15px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+  main { padding: 12px 12px 88px; max-width: 560px; margin: 0 auto; }
+  h2 { font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: .03em; color: var(--hint); margin: 18px 6px 6px; }
+  .card { background: var(--section); border-radius: var(--radius); padding: 12px 14px; margin-bottom: 10px; }
+  .list { background: var(--section); border-radius: var(--radius); overflow: hidden; margin-bottom: 10px; }
+  .row { display: flex; align-items: center; gap: 10px; padding: 11px 14px; border-bottom: 1px solid var(--sep); }
+  .row:last-child { border-bottom: 0; }
+  .row .grow { flex: 1; min-width: 0; }
+  .title { font-weight: 600; }
+  .hint { color: var(--hint); font-size: 13px; }
+  .big { font-size: 34px; font-weight: 700; letter-spacing: -.02em; }
+  .muted { opacity: .55; }
+  .chip { display: inline-block; font-size: 12px; padding: 2px 8px; border-radius: 99px; background: var(--bg2); color: var(--hint); white-space: nowrap; }
+  .chip.ok { background: color-mix(in srgb, var(--ok) 15%, transparent); color: var(--ok); }
+  .chip.bad { background: color-mix(in srgb, var(--danger) 15%, transparent); color: var(--danger); }
+  .chip.acc { background: color-mix(in srgb, var(--accent) 15%, transparent); color: var(--accent); }
+  button { font: inherit; border: 0; cursor: pointer; border-radius: 10px; padding: 9px 14px; background: var(--bg2); color: var(--text); }
+  button:disabled { opacity: .45; cursor: default; }
+  button.primary { background: var(--accent); color: var(--accent-text); font-weight: 600; }
+  button.block { width: 100%; padding: 13px; font-size: 16px; }
+  button.danger { color: var(--danger); }
+  button.sm { padding: 6px 10px; font-size: 13px; }
+  button.on-ok { background: var(--ok); color: #fff; }
+  button.on-bad { background: var(--danger); color: #fff; }
+  .seg { display: flex; background: var(--bg2); border-radius: 10px; padding: 3px; gap: 3px; }
+  .seg button { flex: 1; background: transparent; padding: 7px; font-size: 14px; }
+  .seg button.active { background: var(--section); font-weight: 600; box-shadow: 0 1px 2px rgba(0,0,0,.08); }
+  .radio { width: 20px; height: 20px; border-radius: 50%; border: 2px solid var(--hint); flex: none; }
+  .radio.on { border: 6px solid var(--accent); }
+  .tabs { position: fixed; left: 0; right: 0; bottom: 0; display: flex; background: var(--section);
+    border-top: 1px solid var(--sep); padding: 6px 4px calc(6px + env(safe-area-inset-bottom)); }
+  .tabs button { flex: 1; background: none; padding: 4px; display: flex; flex-direction: column; align-items: center; gap: 1px; font-size: 11px; color: var(--hint); }
+  .tabs button .ic { font-size: 20px; line-height: 1.2; }
+  .tabs button.active { color: var(--accent); }
+  .toast { position: fixed; left: 12px; right: 12px; bottom: 84px; background: var(--text); color: var(--bg);
+    padding: 11px 14px; border-radius: 12px; font-size: 14px; opacity: 0; transform: translateY(8px);
+    transition: .2s; pointer-events: none; z-index: 10; max-width: 536px; margin: 0 auto; }
+  .toast.show { opacity: .94; transform: none; }
+  .center { text-align: center; padding: 40px 16px; }
+  .spacer { height: 8px; }
+  .flex { display: flex; gap: 8px; align-items: center; }
+  .between { justify-content: space-between; }
+  a { color: var(--link); text-decoration: none; }
+  .scan { font-size: 17px; padding: 15px; border-radius: var(--radius); }
+</style>
+</head>
+<body>
+<main id="view"><div class="center hint">Загрузка…</div></main>
+<nav class="tabs" id="tabs" hidden></nav>
+<div class="toast" id="toast"></div>
+
+<script>
+const tg = window.Telegram?.WebApp;
+tg?.ready(); tg?.expand();
+
+const S = { me: null, tab: 'trips', routes: null, route: null, stopId: null, dirs: 'both', driver: { routeId: null, date: null, dir: null } };
+const $view = document.getElementById('view');
+const devUser = new URLSearchParams(location.search).get('dev');
+
+// ───────── утилиты ─────────
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const hm = t => (t || '').slice(0, 5);
+const money = v => `${Math.round(v)} сом`;
+const dirName = d => d === 'Morning' ? 'утро' : 'вечер';
+const haptic = type => tg?.HapticFeedback?.notificationOccurred?.(type);
+const tap = () => tg?.HapticFeedback?.impactOccurred?.('light');
+
+let toastTimer;
+function toast(msg, ok = true) {
+  const el = document.getElementById('toast');
+  el.textContent = msg; el.classList.add('show');
+  haptic(ok ? 'success' : 'error');
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => el.classList.remove('show'), 3200);
+}
+
+async function api(path, body) {
+  const headers = { 'Content-Type': 'application/json' };
+  if (tg?.initData) headers.Authorization = 'tma ' + tg.initData;
+  else if (devUser) headers['X-Dev-User'] = devUser;
+  const res = await fetch('/api/app' + path, { method: body === undefined ? 'GET' : 'POST', headers, body: body === undefined ? undefined : JSON.stringify(body) });
+  if (res.status === 401 || res.status === 403) {
+    const err = await res.json().catch(() => ({}));
+    throw Object.assign(new Error(err.message || 'Нет доступа'), { code: err.error || 'forbidden' });
+  }
+  if (!res.ok) throw new Error('Ошибка сервера, попробуйте ещё раз');
+  return res.json();
+}
+
+async function act(path, body, after) {
+  try {
+    const r = await api(path, body);
+    toast(r.message, r.ok);
+    if (after) await after(r);
+    return r;
+  } catch (e) { toast(e.message, false); }
+}
+
+function confirmBox(text) {
+  return new Promise(res => tg?.showConfirm ? tg.showConfirm(text, res) : res(confirm(text)));
+}
+
+// ───────── старт ─────────
+async function boot() {
+  try {
+    S.me = await api('/me');
+  } catch (e) {
+    if (e.code === 'need_contact') return renderNeedContact();
+    $view.innerHTML = `<div class="center"><div class="big">🚐</div><p>${esc(e.message)}</p></div>`;
+    return;
+  }
+  renderTabs();
+  const start = tg?.initDataUnsafe?.start_param;
+  if (start && start.startsWith('board_')) await board(start);
+  show(S.tab);
+}
+
+function renderNeedContact() {
+  $view.innerHTML = `
+    <div class="center">
+      <div class="big">🚐</div>
+      <p class="title">Добро пожаловать в RideWay</p>
+      <p class="hint">Поделитесь номером телефона — по нему мы вас узнаем.</p>
+      <button class="primary block" id="share">📱 Поделиться номером</button>
+    </div>`;
+  document.getElementById('share').onclick = () => {
+    if (!tg?.requestContact) return toast('Отправьте номер в чате с ботом', false);
+    tg.requestContact(async ok => {
+      if (!ok) return;
+      for (let i = 0; i < 6; i++) {           // бот регистрирует контакт асинхронно
+        await new Promise(r => setTimeout(r, 1000));
+        try { S.me = await api('/me'); renderTabs(); return show('trips'); } catch { }
+      }
+      toast('Не получилось. Откройте чат с ботом и нажмите «Поделиться номером».', false);
+    });
+  };
+}
+
+function renderTabs() {
+  const tabs = [['trips', '🗓', 'Поездки'], ['routes', '🚐', 'Маршруты'], ['pay', '💰', 'Оплата']];
+  if (S.me.isDriver) tabs.push(['driver', '🧭', 'Водитель']);
+  const el = document.getElementById('tabs');
+  el.hidden = false;
+  el.innerHTML = tabs.map(([id, ic, name]) => `<button data-tab="${id}"><span class="ic">${ic}</span>${name}</button>`).join('');
+  el.onclick = e => { const b = e.target.closest('button'); if (b) { tap(); S.route = null; show(b.dataset.tab); } };
+}
+
+function show(tab) {
+  S.tab = tab;
+  document.querySelectorAll('.tabs button').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
+  tg?.BackButton?.hide();
+  clearInterval(S.driverTimer);
+  ({ trips: renderTrips, routes: renderRoutes, pay: renderPay, driver: renderDriver })[tab]();
+}
+
+// ───────── посадка по QR ─────────
+function scan() {
+  if (tg?.showScanQrPopup && tg.isVersionAtLeast?.('6.4')) {
+    tg.showScanQrPopup({ text: 'Наведите камеру на QR-код в машине' }, text => {
+      if (!/board_|^[0-9a-f]{6,32}$/i.test(text)) return false;   // не наш QR — продолжаем сканировать
+      tg.closeScanQrPopup(); board(text); return true;
+    });
+  } else {
+    const code = prompt('Введите код с наклейки в машине');
+    if (code) board(code);
+  }
+}
+async function board(code) {
+  await act('/board', { code }, () => S.tab === 'trips' && renderTrips());
+}
+
+// ───────── Поездки ─────────
+async function renderTrips() {
+  const [me, trips] = await Promise.all([api('/me'), api('/trips')]);
+  S.me = me;
+  const m = me.membership;
+  const todayRiding = trips.filter(t => t.isToday && !t.isAbsent && !t.isCancelled);
+  const needBoard = todayRiding.some(t => t.result !== 'Boarded');
+
+  let html = '';
+  if (todayRiding.length) {
+    html += `<button class="primary block scan" id="scan">📷 Я в машине — отсканировать QR</button><div class="spacer"></div>`;
+  }
+
+  html += `<div class="card">`;
+  if (!m) html += `<div class="title">Вы пока не записаны на маршрут</div><div class="hint">Выберите маршрут и остановку — место будет закреплено за вами.</div>
+                   <div class="spacer"></div><button class="primary" data-go="routes">Выбрать маршрут</button>`;
+  else if (m.status === 'Waitlist') html += `<div class="flex between"><div class="title">${esc(m.route)}</div><span class="chip">в очереди</span></div>
+                   <div class="hint">Свободных мест пока нет — сообщим, когда освободится.</div>`;
+  else html += `<div class="flex between"><div class="title">${esc(m.route)}</div><span class="chip ok">постоянно</span></div>
+                   <div class="hint">Остановка «${esc(m.stop)}» · ${m.morning && m.evening ? 'утро и вечер' : m.morning ? 'утро' : 'вечер'}</div>`;
+  if (me.due > 0) html += `<div class="spacer"></div><div class="flex between"><span class="hint">К оплате</span><a href="#" data-go="pay"><b>${money(me.due)}</b></a></div>`;
+  html += `</div>`;
+
+  html += `<h2>Ближайшие поездки</h2>`;
+  if (!trips.length) html += `<div class="card hint">Поездок нет.</div>`;
+  else {
+    html += `<div class="list">` + trips.map((t, i) => {
+      let chip;
+      if (t.isCancelled) chip = `<span class="chip bad">рейс отменён</span>`;
+      else if (t.isAbsent) chip = `<span class="chip">не еду</span>`;
+      else if (t.result === 'Boarded') chip = `<span class="chip ok">✓ в пути</span>`;
+      else if (t.result === 'NoShow') chip = `<span class="chip bad">неявка</span>`;
+      else if (!t.isRegular) chip = `<span class="chip acc">разово</span>`;
+      else chip = '';
+      const btn = !t.canChange ? '' : t.isAbsent
+        ? `<button class="sm" data-unabs="${i}">Еду</button>`
+        : `<button class="sm danger" data-abs="${i}">Не еду</button>`;
+      return `<div class="row ${t.isAbsent || t.isCancelled ? 'muted' : ''}">
+        <div class="grow"><div class="title">${esc(t.label)}${t.isToday ? ' · сегодня' : ''}</div>
+          <div class="hint">${hm(t.time)} · ${esc(t.stop)} · ${esc(t.route)}</div></div>
+        ${chip}${btn}</div>`;
+    }).join('') + `</div><div class="hint" style="padding:0 6px">Отметить «не еду» можно до 21:00 накануне — тогда поездка не оплачивается.</div>`;
+  }
+  if (m) html += `<div class="spacer"></div><button class="block danger" id="leave" style="background:var(--section)">Отписаться от маршрута</button>`;
+
+  $view.innerHTML = html;
+  document.getElementById('scan')?.addEventListener('click', scan);
+  $view.querySelectorAll('[data-go]').forEach(b => b.onclick = e => { e.preventDefault(); show(b.dataset.go); });
+  $view.querySelectorAll('[data-abs]').forEach(b => b.onclick = () => { const t = trips[b.dataset.abs]; act('/absence', { date: t.date, dir: t.dir }, renderTrips); });
+  $view.querySelectorAll('[data-unabs]').forEach(b => b.onclick = () => { const t = trips[b.dataset.unabs]; act('/absence/remove', { date: t.date, dir: t.dir }, renderTrips); });
+  const leave = document.getElementById('leave');
+  if (leave) leave.onclick = async () => { if (await confirmBox('Перестать ездить постоянно? Место освободится для других.')) act('/membership/leave', {}, renderTrips); };
+  if (!needBoard) document.getElementById('scan')?.classList.remove('primary');
+}
+
+// ───────── Маршруты ─────────
+async function renderRoutes() {
+  S.routes = await api('/routes');
+  if (S.route) return renderRoute(S.route);
+  $view.innerHTML = `<h2>Маршруты</h2>` + (S.routes.length ? `<div class="list">` + S.routes.map(r => {
+    const first = r.stops[0];
+    return `<div class="row" data-route="${r.id}" style="cursor:pointer">
+      <div class="grow"><div class="title">${esc(r.name)}</div>
+        <div class="hint">${first ? `от «${esc(first.name)}» в ${hm(first.morning)} · ` : ''}${money(r.price)} за поездку</div></div>
+      <span class="chip ${r.freeMorning + r.freeEvening ? 'ok' : ''}">мест: ${Math.min(r.freeMorning, r.freeEvening)}/${r.seats}</span>
+      <span class="hint">›</span></div>`;
+  }).join('') + `</div>` : `<div class="card hint">Пока нет активных маршрутов.</div>`);
+  $view.querySelectorAll('[data-route]').forEach(el => el.onclick = () => { tap(); renderRoute(+el.dataset.route); });
+}
+
+async function renderRoute(id) {
+  S.route = id;
+  const r = S.routes.find(x => x.id === id);
+  const mine = S.me.membership;
+  if (!S.stopId || !r.stops.some(s => s.id === S.stopId)) S.stopId = (mine?.routeId === id ? mine.stopId : r.stops[0]?.id);
+  tg?.BackButton?.offClick(backToRoutes);
+  tg?.BackButton?.onClick(backToRoutes);
+  tg?.BackButton?.show();
+
+  const free = S.dirs === 'morning' ? r.freeMorning : S.dirs === 'evening' ? r.freeEvening : Math.min(r.freeMorning, r.freeEvening);
+  let html = `<div class="card"><div class="title" style="font-size:18px">${esc(r.name)}</div>
+      <div class="hint">${esc(r.car)} · мест ${r.seats} · ${money(r.price)} за поездку</div></div>
+    <h2>Ваша остановка · утро / вечер</h2><div class="list">` +
+    r.stops.map(s => `<div class="row" data-stop="${s.id}" style="cursor:pointer">
+        <div class="radio ${s.id === S.stopId ? 'on' : ''}"></div>
+        <div class="grow">${esc(s.name)}</div><span class="hint">${hm(s.morning)} / ${hm(s.evening)}</span></div>`).join('') +
+    `</div>
+    <h2>Постоянно</h2>
+    <div class="card">
+      <div class="seg" id="dirs">
+        <button data-d="both">Утро и вечер</button><button data-d="morning">Утро</button><button data-d="evening">Вечер</button>
+      </div><div class="spacer"></div>
+      <button class="primary block" id="join">${free > 0 ? `📌 Ездить постоянно · свободно ${free}` : 'Встать в очередь'}</button>
+      <div class="hint" style="margin-top:6px">Место закрепляется за вами каждый рабочий день. Платите только за поездки.</div>
+    </div>
+    <h2>Разовая поездка</h2><div class="list" id="oneoff"><div class="row hint">Загрузка…</div></div>`;
+  $view.innerHTML = html;
+
+  $view.querySelectorAll('[data-stop]').forEach(el => el.onclick = () => { tap(); S.stopId = +el.dataset.stop; renderRoute(id); });
+  $view.querySelectorAll('#dirs button').forEach(b => { b.classList.toggle('active', b.dataset.d === S.dirs); b.onclick = () => { tap(); S.dirs = b.dataset.d; renderRoute(id); }; });
+  document.getElementById('join').onclick = () => act('/membership',
+    { routeId: id, stopId: S.stopId, morning: S.dirs !== 'evening', evening: S.dirs !== 'morning' },
+    async r => { if (r.ok) { S.me = await api('/me'); backToRoutes(); show('trips'); } });
+
+  const trips = await api(`/routes/${id}/trips`);
+  const box = document.getElementById('oneoff');
+  if (!box) return;
+  box.innerHTML = trips.length ? trips.map((t, i) => `<div class="row">
+      <div class="grow"><div class="title">${esc(t.label)}</div><div class="hint">отправление ${hm(t.departure)} · свободно ${t.free}</div></div>
+      <button class="sm primary" data-book="${i}">Записаться</button></div>`).join('')
+    : `<div class="row hint">На ближайшие дни свободных мест нет.</div>`;
+  box.querySelectorAll('[data-book]').forEach(b => b.onclick = () => {
+    const t = trips[b.dataset.book];
+    act('/oneoff', { routeId: id, stopId: S.stopId, date: t.date, dir: t.dir }, r => r.ok && renderRoute(id));
+  });
+}
+function backToRoutes() {
+  tg?.BackButton?.offClick(backToRoutes); tg?.BackButton?.hide();
+  S.route = null;
+  if (S.tab === 'routes') renderRoutes();
+}
+
+// ───────── Оплата ─────────
+async function renderPay() {
+  const b = await api('/balance');
+  $view.innerHTML = `
+    <div class="card center" style="padding:22px">
+      <div class="hint">К оплате</div>
+      <div class="big">${money(Math.max(0, b.due))}</div>
+      ${b.due < 0 ? `<div class="hint">Переплата ${money(-b.due)} — учтём дальше</div>` : ''}
+      <div class="hint" style="margin-top:6px">Наличными или переводом водителю своего маршрута. Счёт — по пятницам.</div>
+    </div>
+    <div class="list">
+      <div class="row"><div class="grow">Поездок</div><b>${b.rides}</b></div>
+      <div class="row"><div class="grow">Неявок</div><b>${b.noShows}</b></div>
+      <div class="row"><div class="grow">Начислено</div><b>${money(b.charged)}</b></div>
+      <div class="row"><div class="grow">Оплачено</div><b>${money(b.paid)}</b></div>
+    </div>
+    <h2>За 4 недели</h2>
+    <div class="list">${b.items.length ? b.items.map(i => `<div class="row">
+        <div class="grow">${esc(i.label)}</div>
+        <span class="chip ${i.result === 'Boarded' ? 'ok' : 'bad'}">${i.result === 'Boarded' ? 'поездка' : 'неявка'}</span>
+        <b style="min-width:64px;text-align:right">${money(i.price)}</b></div>`).join('') : `<div class="row hint">Поездок пока не было.</div>`}</div>`;
+}
+
+// ───────── Водитель ─────────
+async function renderDriver() {
+  const routes = await api('/driver/routes');
+  if (!routes.length) { $view.innerHTML = `<div class="card hint">За вами не закреплена машина. Обратитесь к администратору.</div>`; return; }
+  const d = S.driver;
+  if (!routes.some(r => r.id === d.routeId)) d.routeId = routes[0].id;
+  const q = new URLSearchParams({ routeId: d.routeId });
+  if (d.date) q.set('date', d.date);
+  if (d.dir) q.set('dir', d.dir);
+  const t = await api('/driver/trip?' + q);
+  d.date = t.date; d.dir = t.dir;
+
+  const shift = n => { const x = new Date(d.date + 'T12:00:00'); x.setDate(x.getDate() + n); d.date = x.toISOString().slice(0, 10); renderDriver(); };
+  let html = '';
+  if (routes.length > 1) html += `<div class="seg" style="margin-bottom:8px">${routes.map(r => `<button data-r="${r.id}" class="${r.id === d.routeId ? 'active' : ''}">${esc(r.name)}</button>`).join('')}</div>`;
+  html += `<div class="card">
+      <div class="flex between"><button class="sm" id="prev">‹</button>
+        <div class="center" style="padding:0"><div class="title">${esc(t.label)}${t.isToday ? ' · сегодня' : ''}</div>
+          <div class="hint">${esc(t.route)}${t.departure ? ' · отправление ' + hm(t.departure) : ''}</div></div>
+        <button class="sm" id="next">›</button></div>
+      <div class="spacer"></div>
+      <div class="seg" id="dir"><button data-d="Morning">Утро</button><button data-d="Evening">Вечер</button></div>
+    </div>`;
+
+  if (!t.isWorkday) html += `<div class="card hint">Выходной — рейса нет.</div>`;
+  else if (t.isCancelled) html += `<div class="card"><span class="chip bad">Рейс отменён</span> <span class="hint">${esc(t.reason)}</span></div>`;
+  else {
+    const boarded = t.passengers.filter(p => p.result === 'Boarded').length;
+    html += `<div class="flex between" style="margin:14px 6px 6px"><h2 style="margin:0">Пассажиры</h2>
+      <span class="hint">едут ${t.occupied}/${t.capacity}${t.canMark ? ` · сели ${boarded}` : ''}</span></div>`;
+    html += `<div class="list">` + (t.passengers.length ? t.passengers.map(p => {
+      const marks = p.isAbsent ? `<span class="chip">не едет</span>` : !t.canMark ? '' : `
+        <button class="sm ${p.result === 'Boarded' ? 'on-ok' : ''}" data-m="${p.userId}" data-res="Boarded">✓</button>
+        <button class="sm ${p.result === 'NoShow' ? 'on-bad' : ''}" data-m="${p.userId}" data-res="NoShow">✗</button>`;
+      return `<div class="row ${p.isAbsent ? 'muted' : ''}">
+        <div class="grow"><div class="title">${esc(p.name)}${p.isRegular ? '' : ' <span class="chip acc">разово</span>'}</div>
+          <div class="hint">${hm(p.time)} · ${esc(p.stop)} · <a href="tel:+${esc(p.phone)}">+${esc(p.phone)}</a></div></div>${marks}</div>`;
+    }).join('') : `<div class="row hint">Пассажиров нет.</div>`) + `</div>`;
+    if (t.isToday) html += `<button class="primary block" id="arrived">${t.arrivedAt ? `🏁 Прибыли в ${t.arrivedAt.slice(11, 16)} · обновить` : '🏁 Прибыли'}</button><div class="spacer"></div>`;
+    if (t.date >= new Date().toISOString().slice(0, 10)) html += `<button class="block danger" id="cancel" style="background:var(--section)">Отменить рейс</button>`;
+    html += `<div class="hint" style="padding:8px 6px">Пассажиры отмечаются сами по QR в машине — галочки появятся тут. Кнопки ✓/✗ — если кто-то не смог отсканировать.</div>`;
+  }
+  $view.innerHTML = html;
+
+  $view.querySelectorAll('[data-r]').forEach(b => b.onclick = () => { d.routeId = +b.dataset.r; renderDriver(); });
+  document.getElementById('prev').onclick = () => shift(-1);
+  document.getElementById('next').onclick = () => shift(1);
+  $view.querySelectorAll('#dir button').forEach(b => { b.classList.toggle('active', b.dataset.d === d.dir); b.onclick = () => { tap(); d.dir = b.dataset.d; renderDriver(); }; });
+  $view.querySelectorAll('[data-m]').forEach(b => b.onclick = () => { tap();
+    act('/driver/mark', { routeId: d.routeId, date: d.date, dir: d.dir, userId: +b.dataset.m, result: b.dataset.res }, renderDriver); });
+  const ref = { routeId: d.routeId, date: d.date, dir: d.dir };
+  document.getElementById('arrived')?.addEventListener('click', () => act('/driver/arrived', ref, renderDriver));
+  document.getElementById('cancel')?.addEventListener('click', async () => {
+    if (await confirmBox('Отменить рейс? Все пассажиры получат уведомление.')) act('/driver/cancel', { ...ref, reason: '' }, renderDriver);
+  });
+
+  // Пока открыта вкладка, подтягиваем отметки пассажиров по QR.
+  clearInterval(S.driverTimer);
+  S.driverTimer = setInterval(() => S.tab === 'driver' && !document.hidden && renderDriver(), 20000);
+}
+
+boot();
+</script>
+</body>
+</html>

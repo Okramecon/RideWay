@@ -63,6 +63,11 @@ public class Car
     public int Seats { get; set; }
     public int? DriverUserId { get; set; }
     public User? Driver { get; set; }
+    /// <summary>Секрет QR-наклейки в салоне: пассажир сканирует его при посадке.</summary>
+    public string BoardingCode { get; set; } = "";
+
+    public static string NewBoardingCode() =>
+        Convert.ToHexStringLower(System.Security.Cryptography.RandomNumberGenerator.GetBytes(6));
 }
 
 public class Route

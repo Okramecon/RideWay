@@ -36,3 +36,32 @@
     </tbody>
 </table>
 </div>
+
+@if (Model.Cars.Count > 0)
+{
+    <h2 class="h5 mt-4">QR-наклейки для посадки</h2>
+    <p class="text-muted small mb-2">
+        Распечатайте и наклейте в салоне. Пассажир сканирует QR камерой телефона или кнопкой «Я в машине» в приложении — поездка отмечается сама
+        (за 30 минут до времени посадки и в течение часа после).
+        @if (Model.BotUsername is null)
+        {
+            <br /><span class="text-warning">Бот не запущен — QR пока содержит только код (сработает из приложения, но не с камеры). Запустите бота и обновите страницу.</span>
+        }
+    </p>
+    <div class="row g-3">
+        @foreach (var c in Model.Cars)
+        {
+            <div class="col-6 col-md-4 col-lg-3">
+                <div class="border rounded bg-white p-2 text-center h-100">
+                    <img src="@Url.Page("/Cars", "Qr", new { id = c.Id })" alt="QR @c.Plate" class="img-fluid" />
+                    <div class="fw-semibold">@c.Plate</div>
+                    <div class="small text-muted mb-2">RideWay · отсканируйте при посадке</div>
+                    <form method="post" asp-page-handler="RegenerateQr" onsubmit="return confirm('Старая наклейка перестанет работать. Перевыпустить?')">
+                        <input type="hidden" name="id" value="@c.Id" />
+                        <button class="btn btn-sm btn-link">Перевыпустить</button>
+                    </form>
+                </div>
+            </div>
+        }
+    </div>
+}

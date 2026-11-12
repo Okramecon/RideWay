@@ -40,6 +40,9 @@ else
     services.AddSingleton<INotifier, LogNotifier>();
 }
 services.AddHostedService<ScheduledNotifications>();
+services.AddSingleton<GoHome.Web.App.BotInfo>();
+services.ConfigureHttpJsonOptions(o =>
+    o.SerializerOptions.Converters.Add(new System.Text.Json.Serialization.JsonStringEnumConverter()));
 
 // Ключи cookie — в постоянный том, чтобы вход в админку переживал перезапуск контейнера.
 if (config["DataProtection:KeysPath"] is { Length: > 0 } keysPath)
@@ -71,6 +74,11 @@ using (var scope = app.Services.CreateScope())
     db.Database.Migrate();
     if (app.Environment.IsDevelopment() && config.GetValue<bool>("SeedDemoData"))
         await DemoSeed.RunAsync(db);
+
+    // У машин, заведённых до появления QR-посадки, кода нет — выдаём.
+    foreach (var car in db.Cars.Where(c => c.BoardingCode == "").ToList())
+        car.BoardingCode = GoHome.Web.Domain.Car.NewBoardingCode();
+    await db.SaveChangesAsync();
 }
 
 if (!app.Environment.IsDevelopment())
@@ -84,6 +92,9 @@ app.UseAuthorization();
 app.MapStaticAssets();
 app.MapRazorPages().WithStaticAssets();
 app.MapGet("/health", () => Results.Ok("ok")).AllowAnonymous();
+app.MapGet("/app/",(IWebHostEnvironment env) =>
+    Results.File(Path.Combine(env.WebRootPath, "app", "index.html"), "text/html; charset=utf-8")).AllowAnonymous();
+GoHome.Web.App.MiniAppApi.MapMiniAppApi(app);
 
 app.Run();
 
