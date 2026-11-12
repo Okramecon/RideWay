@@ -1,0 +1,80 @@
+﻿@page
+@model IndexModel
+@{
+    ViewData["Title"] = "Сводка";
+    var m = Model.Metrics;
+}
+
+<div class="d-flex flex-wrap align-items-end justify-content-between gap-2 mb-3">
+    <h1 class="h4 mb-0">Сводка пилота</h1>
+    <form method="get" class="d-flex gap-2 align-items-center">
+        <input type="date" name="from" value="@m.From.ToString("yyyy-MM-dd")" class="form-control form-control-sm" />
+        <span>—</span>
+        <input type="date" name="to" value="@m.To.ToString("yyyy-MM-dd")" class="form-control form-control-sm" />
+        <button class="btn btn-sm btn-outline-primary">Показать</button>
+    </form>
+</div>
+
+<div class="row g-2 mb-4">
+    @{
+        (string Label, string Value, string Hint)[] tiles =
+        [
+            ("Заполняемость", $"{m.Occupancy:P0}", $"{m.Boarded} поездок / {m.TripsRun} рейсов"),
+            ("Постоянных", m.Regulars.ToString(), $"в очереди: {m.Waitlist}"),
+            ("Ездили за 7 дней", m.ActiveLast7Days.ToString(), $"из них ≥4 дней: {m.FrequentLast7Days}; всего ездили: {m.EverRode}"),
+            ("Неявки", m.NoShows.ToString(), $"«не еду» заранее: {m.Absences}"),
+            ("Начислено", $"{m.Charged:0} сом", $"оплачено {m.Paid:0}"),
+            ("Долг", $"{m.Due:0} сом", "начислено − оплачено"),
+        ];
+    }
+    @foreach (var t in tiles)
+    {
+        <div class="col-6 col-md-4 col-lg-2">
+            <div class="border rounded p-2 h-100 bg-white">
+                <div class="text-muted small">@t.Label</div>
+                <div class="fs-4 fw-semibold">@t.Value</div>
+                <div class="text-muted small">@t.Hint</div>
+            </div>
+        </div>
+    }
+</div>
+
+<h2 class="h5">По маршрутам</h2>
+<div class="table-responsive mb-4">
+    <table class="table table-sm align-middle bg-white">
+        <thead><tr><th>Маршрут</th><th>Мест</th><th>Рейсов</th><th>Отменено</th><th>Поездок</th><th>Заполн.</th><th>Неявки</th><th>Опоздание утром, мин</th><th>Выручка</th></tr></thead>
+        <tbody>
+        @foreach (var r in m.Routes)
+        {
+            <tr>
+                <td>@r.Route</td><td>@r.Seats</td><td>@r.TripsRun</td><td>@r.TripsCancelled</td><td>@r.Boarded</td>
+                <td>@r.Occupancy.ToString("P0")</td><td>@r.NoShows</td>
+                <td>@(r.AvgMorningDelayMin is { } d ? d.ToString("+0;-0;0") : "—") <span class="text-muted small">(@r.ArrivalsMarked отметок)</span></td>
+                <td>@r.Revenue.ToString("0") сом</td>
+            </tr>
+        }
+        </tbody>
+    </table>
+</div>
+<p class="text-muted small">Заполняемость считается по фактическим отметкам «сел» от водителей. Рейсов = рабочие дни × 2 − отменённые.</p>
+
+<h2 class="h5">Рейсы @WorkCalendar.Format(Model.TodayDate)</h2>
+<div class="row g-2">
+    @foreach (var t in Model.Today)
+    {
+        <div class="col-md-6 col-lg-4">
+            <a class="d-block border rounded p-2 bg-white text-decoration-none text-body" asp-page="/Trips" asp-route-date="@Model.TodayDate.ToString("yyyy-MM-dd")">
+                <div class="fw-semibold">@t.Route.Name, @WorkCalendar.Format(t.Direction)</div>
+                @if (t.IsCancelled)
+                {
+                    <span class="badge bg-danger">отменён</span>
+                }
+                else
+                {
+                    <span>Едут @t.Occupied из @t.Capacity</span>
+                    @if (t.ArrivedAt is { } a) { <span class="text-success"> · прибыли @a.ToString("HH:mm")</span> }
+                }
+            </a>
+        </div>
+    }
+</div>

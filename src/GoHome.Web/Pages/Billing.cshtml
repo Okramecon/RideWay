@@ -1,0 +1,48 @@
+@page
+@model BillingModel
+@{ ViewData["Title"] = "Оплаты"; }
+
+<h1 class="h4 mb-3">Оплаты</h1>
+<p class="text-muted small">К оплате = поездки (по отметкам водителя) − полученные платежи. В пятницу в 19:30 бот присылает пассажирам сумму.</p>
+
+<div class="table-responsive mb-4">
+<table class="table table-sm align-middle bg-white">
+    <thead><tr><th>Пассажир</th><th>Поездок</th><th>Неявок</th><th>Начислено</th><th>Оплачено</th><th>К оплате</th><th>Принять оплату</th></tr></thead>
+    <tbody>
+    @foreach (var b in Model.Balances)
+    {
+        <tr>
+            <td>@b.User.Name <div class="small text-muted">+@b.User.Phone</div></td>
+            <td>@b.Rides</td><td>@b.NoShows</td>
+            <td>@b.Charged.ToString("0")</td><td>@b.Paid.ToString("0")</td>
+            <td class="fw-semibold @(b.Due > 0 ? "text-danger" : "")">@b.Due.ToString("0")</td>
+            <td>
+                <form method="post" asp-page-handler="Pay" class="d-flex gap-1">
+                    <input type="hidden" name="userId" value="@b.User.Id" />
+                    <input name="amount" type="number" min="1" value="@(b.Due > 0 ? b.Due.ToString("0") : "")" class="form-control form-control-sm" style="width:6rem" required />
+                    <select name="method" class="form-select form-select-sm" style="width:auto">
+                        <option value="Cash">наличные</option><option value="Transfer">перевод</option>
+                    </select>
+                    <input name="receivedBy" class="form-control form-control-sm" placeholder="кому" style="width:8rem" />
+                    <button class="btn btn-sm btn-outline-success">Оплачено</button>
+                </form>
+            </td>
+        </tr>
+    }
+    </tbody>
+</table>
+</div>
+
+<h2 class="h5">Последние платежи</h2>
+<table class="table table-sm bg-white">
+    <thead><tr><th>Когда</th><th>Кто</th><th>Сумма</th><th>Способ</th><th>Принял</th></tr></thead>
+    <tbody>
+    @foreach (var p in Model.RecentPayments)
+    {
+        <tr>
+            <td>@p.PaidAt.AddHours(6).ToString("dd.MM HH:mm")</td><td>@p.User.Name</td><td>@p.Amount.ToString("0")</td>
+            <td>@(p.Method == PaymentMethod.Cash ? "наличные" : "перевод")</td><td>@p.ReceivedBy</td>
+        </tr>
+    }
+    </tbody>
+</table>

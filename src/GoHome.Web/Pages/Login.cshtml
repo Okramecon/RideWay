@@ -1,0 +1,17 @@
+@page
+@model LoginModel
+@{ ViewData["Title"] = "Вход"; }
+
+<div class="row justify-content-center">
+    <div class="col-sm-8 col-md-5 col-lg-4">
+        <h1 class="h4 mb-3">Вход в админку</h1>
+        @if (Model.Error is not null)
+        {
+            <div class="alert alert-danger py-2">@Model.Error</div>
+        }
+        <form method="post">
+            <input type="password" class="form-control mb-2" asp-for="Password" placeholder="Пароль" autofocus />
+            <button class="btn btn-primary w-100">Войти</button>
+        </form>
+    </div>
+</div>

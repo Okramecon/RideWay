@@ -1,0 +1,46 @@
+﻿<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>@ViewData["Title"] — GoHome</title>
+    <link rel="stylesheet" href="~/lib/bootstrap/dist/css/bootstrap.min.css" />
+    <link rel="stylesheet" href="~/css/site.css" asp-append-version="true" />
+</head>
+<body>
+    <nav class="navbar navbar-expand-md navbar-light bg-white border-bottom mb-3">
+        <div class="container">
+            <a class="navbar-brand fw-semibold" asp-page="/Index">GoHome</a>
+            @if (User.Identity?.IsAuthenticated == true)
+            {
+                <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#nav" aria-label="Меню">
+                    <span class="navbar-toggler-icon"></span>
+                </button>
+                <div class="collapse navbar-collapse" id="nav">
+                    <ul class="navbar-nav me-auto">
+                        <li class="nav-item"><a class="nav-link" asp-page="/Index">Сводка</a></li>
+                        <li class="nav-item"><a class="nav-link" asp-page="/Trips">Рейсы</a></li>
+                        <li class="nav-item"><a class="nav-link" asp-page="/Users">Люди</a></li>
+                        <li class="nav-item"><a class="nav-link" asp-page="/Billing">Оплаты</a></li>
+                        <li class="nav-item"><a class="nav-link" asp-page="/Routes">Маршруты</a></li>
+                        <li class="nav-item"><a class="nav-link" asp-page="/Cars">Машины</a></li>
+                        <li class="nav-item"><a class="nav-link" asp-page="/Audit">Журнал</a></li>
+                    </ul>
+                    <form method="post" asp-page="/Login" asp-page-handler="Logout">
+                        <button class="btn btn-sm btn-outline-secondary">Выйти</button>
+                    </form>
+                </div>
+            }
+        </div>
+    </nav>
+    <main class="container pb-5">
+        @if (TempData["Message"] is string message)
+        {
+            <div class="alert @(TempData["Ok"] is false ? "alert-warning" : "alert-success") py-2">@message</div>
+        }
+        @RenderBody()
+    </main>
+    <script src="~/lib/bootstrap/dist/js/bootstrap.bundle.min.js"></script>
+    @await RenderSectionAsync("Scripts", required: false)
+</body>
+</html>

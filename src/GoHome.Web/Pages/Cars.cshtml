@@ -1,0 +1,38 @@
+@page
+@model CarsModel
+@{ ViewData["Title"] = "Машины"; }
+
+<h1 class="h4 mb-3">Машины</h1>
+<p class="text-muted small">Водитель — пользователь с ролью «Водитель» или «Админ» (заводится на странице «Люди»).</p>
+
+<div class="table-responsive">
+<table class="table table-sm align-middle bg-white">
+    <thead><tr><th>Модель</th><th>Номер</th><th style="width:7rem">Мест</th><th>Водитель</th><th></th></tr></thead>
+    <tbody>
+    @foreach (var c in Model.Cars.Append(null))
+    {
+        var f = $"car-{c?.Id ?? 0}";
+        <tr>
+            <td><input form="@f" name="model" value="@c?.Model" class="form-control form-control-sm" placeholder="Toyota Camry" required /></td>
+            <td><input form="@f" name="plate" value="@c?.Plate" class="form-control form-control-sm" placeholder="01KG 123ABC" required /></td>
+            <td><input form="@f" name="seats" type="number" min="1" max="50" value="@(c?.Seats ?? 4)" class="form-control form-control-sm" /></td>
+            <td>
+                <select form="@f" name="driverUserId" class="form-select form-select-sm">
+                    <option value="">—</option>
+                    @foreach (var d in Model.Drivers)
+                    {
+                        <option value="@d.Id" selected="@(c?.DriverUserId == d.Id)">@d.Name</option>
+                    }
+                </select>
+            </td>
+            <td>
+                <form id="@f" method="post" asp-page-handler="Save">
+                    <input type="hidden" name="id" value="@c?.Id" />
+                    <button class="btn btn-sm @(c is null ? "btn-primary" : "btn-outline-primary")">@(c is null ? "Добавить" : "Сохранить")</button>
+                </form>
+            </td>
+        </tr>
+    }
+    </tbody>
+</table>
+</div>

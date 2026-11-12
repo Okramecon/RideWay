@@ -1,0 +1,8 @@
+**/bin
+**/obj
+**/*.db
+**/*.db-*
+.git
+.claude
+tests
+.env

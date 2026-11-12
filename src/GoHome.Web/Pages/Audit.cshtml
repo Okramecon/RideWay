@@ -1,0 +1,22 @@
+@page
+@model AuditModel
+@{ ViewData["Title"] = "Журнал"; }
+
+<h1 class="h4 mb-3">Журнал изменений</h1>
+<div class="mb-2 d-flex flex-wrap gap-1">
+    @foreach (var e in new[] { "", "Payment", "RideLog", "Membership", "OneOffBooking", "Absence", "TripCancellation" })
+    {
+        <a class="btn btn-sm btn-outline-secondary" asp-route-entity="@e">@(e == "" ? "Все" : e)</a>
+    }
+</div>
+<div class="table-responsive">
+<table class="table table-sm bg-white small">
+    <thead><tr><th>Когда</th><th>Объект</th><th>Действие</th><th>Детали</th><th>Кто</th></tr></thead>
+    <tbody>
+    @foreach (var a in Model.Items)
+    {
+        <tr><td class="text-nowrap">@a.At.AddHours(6).ToString("dd.MM HH:mm:ss")</td><td>@a.Entity #@a.EntityId</td><td>@a.Action</td><td>@a.Details</td><td>@a.Actor</td></tr>
+    }
+    </tbody>
+</table>
+</div>

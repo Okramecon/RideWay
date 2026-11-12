@@ -1,0 +1,15 @@
+services:
+  gohome:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      Admin__Password: ${ADMIN_PASSWORD:?задайте ADMIN_PASSWORD в .env}
+      Bot__Token: ${BOT_TOKEN:-}
+      App__PublicUrl: ${PUBLIC_URL:-}
+    volumes:
+      - gohome-data:/data
+
+volumes:
+  gohome-data:

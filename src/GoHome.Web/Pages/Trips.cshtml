@@ -1,0 +1,88 @@
+@page
+@model TripsModel
+@{
+    ViewData["Title"] = "Рейсы";
+    var dateStr = Model.Day.ToString("yyyy-MM-dd");
+}
+
+<div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3">
+    <h1 class="h4 mb-0">Рейсы — @WorkCalendar.Format(Model.Day)</h1>
+    <div class="d-flex gap-2">
+        <a class="btn btn-sm btn-outline-secondary" asp-route-date="@Model.Day.AddDays(-1).ToString("yyyy-MM-dd")">←</a>
+        <form method="get"><input type="date" name="date" value="@dateStr" class="form-control form-control-sm" onchange="this.form.submit()" /></form>
+        <a class="btn btn-sm btn-outline-secondary" asp-route-date="@Model.Day.AddDays(1).ToString("yyyy-MM-dd")">→</a>
+    </div>
+</div>
+
+<div class="row g-3">
+@foreach (var t in Model.Rosters)
+{
+    <div class="col-lg-6">
+        <div class="border rounded bg-white p-3 h-100">
+            <div class="d-flex justify-content-between align-items-start mb-2">
+                <div>
+                    <div class="fw-semibold">@t.Route.Name — @WorkCalendar.Format(t.Direction)</div>
+                    <div class="text-muted small">
+                        @t.Route.Car.Model @t.Route.Car.Plate · водитель: @(t.Route.Car.Driver?.Name ?? "—")
+                        @if (t.DepartureTime is { } dep) { <text> · отправление @dep.ToString("HH:mm")</text> }
+                    </div>
+                </div>
+                @if (!t.IsWorkday) { <span class="badge bg-secondary">выходной</span> }
+                else if (t.IsCancelled) { <span class="badge bg-danger">отменён</span> }
+                else { <span class="badge bg-primary">@t.Occupied / @t.Capacity</span> }
+            </div>
+
+            @if (t.IsCancelled)
+            {
+                <p class="mb-2">Причина: @t.Cancellation!.Reason</p>
+                <form method="post" asp-page-handler="Restore" asp-route-date="@dateStr">
+                    <input type="hidden" name="routeId" value="@t.Route.Id" /><input type="hidden" name="dir" value="@t.Direction" />
+                    <button class="btn btn-sm btn-outline-secondary">Вернуть рейс</button>
+                </form>
+            }
+            else if (t.IsWorkday)
+            {
+                <table class="table table-sm align-middle mb-2">
+                    @foreach (var e in t.Entries)
+                    {
+                        var time = t.Direction == Direction.Morning ? e.Stop.MorningTime : e.Stop.EveningTime;
+                        <tr class="@(e.IsAbsent ? "text-muted" : "")">
+                            <td class="text-nowrap">@time.ToString("HH:mm")</td>
+                            <td>@e.Stop.Name</td>
+                            <td>@e.Name @if (!e.IsRegular) { <span class="badge bg-info">разово</span> } <div class="small text-muted">+@e.Phone</div></td>
+                            <td class="text-end text-nowrap">
+                                @if (e.IsAbsent)
+                                {
+                                    <span>не едет</span>
+                                }
+                                else
+                                {
+                                    <form method="post" asp-page-handler="Mark" asp-route-date="@dateStr" class="d-inline">
+                                        <input type="hidden" name="routeId" value="@t.Route.Id" /><input type="hidden" name="dir" value="@t.Direction" />
+                                        <input type="hidden" name="userId" value="@e.UserId" />
+                                        <button name="result" value="Boarded" class="btn btn-sm @(e.Result == RideResult.Boarded ? "btn-success" : "btn-outline-success")">сел</button>
+                                        <button name="result" value="NoShow" class="btn btn-sm @(e.Result == RideResult.NoShow ? "btn-danger" : "btn-outline-danger")">не пришёл</button>
+                                    </form>
+                                }
+                            </td>
+                        </tr>
+                    }
+                    @if (t.Entries.Count == 0) { <tr><td class="text-muted">Пассажиров нет</td></tr> }
+                </table>
+                <div class="d-flex flex-wrap gap-2">
+                    <form method="post" asp-page-handler="Arrived" asp-route-date="@dateStr">
+                        <input type="hidden" name="routeId" value="@t.Route.Id" /><input type="hidden" name="dir" value="@t.Direction" />
+                        <button class="btn btn-sm btn-outline-primary">Прибыли@(t.ArrivedAt is { } a ? $" ({a:HH:mm})" : "")</button>
+                    </form>
+                    <form method="post" asp-page-handler="Cancel" asp-route-date="@dateStr" class="d-flex gap-1"
+                          onsubmit="return confirm('Отменить рейс и уведомить пассажиров?')">
+                        <input type="hidden" name="routeId" value="@t.Route.Id" /><input type="hidden" name="dir" value="@t.Direction" />
+                        <input name="reason" class="form-control form-control-sm" placeholder="Причина отмены" />
+                        <button class="btn btn-sm btn-outline-danger text-nowrap">Отменить рейс</button>
+                    </form>
+                </div>
+            }
+        </div>
+    </div>
+}
+</div>

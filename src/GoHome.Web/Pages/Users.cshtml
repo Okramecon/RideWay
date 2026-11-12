@@ -1,0 +1,79 @@
+@page
+@model UsersModel
+@{
+    ViewData["Title"] = "Люди";
+    string RoleName(UserRole r) => r switch { UserRole.Driver => "Водитель", UserRole.Admin => "Админ", _ => "Пассажир" };
+}
+
+<h1 class="h4 mb-3">Люди</h1>
+
+<form method="post" asp-page-handler="Create" class="row g-2 align-items-end border rounded bg-white p-3 mb-3">
+    <div class="col-md-4"><label class="form-label small">Имя</label><input name="name" class="form-control" required /></div>
+    <div class="col-md-3"><label class="form-label small">Телефон</label><input name="phone" class="form-control" placeholder="0555 12 34 56" required /></div>
+    <div class="col-md-2">
+        <label class="form-label small">Роль</label>
+        <select name="role" class="form-select">
+            @foreach (var r in Enum.GetValues<UserRole>()) { <option value="@r">@RoleName(r)</option> }
+        </select>
+    </div>
+    <div class="col-md-auto"><button class="btn btn-primary">Добавить</button></div>
+    <div class="col-12 text-muted small">Пассажиры обычно регистрируются сами через бота. Водителей и админов заведите здесь — при входе в бот по этому номеру им откроется меню водителя.</div>
+</form>
+
+<div class="table-responsive">
+<table class="table table-sm align-middle bg-white">
+    <thead><tr><th>Имя</th><th>Телефон</th><th>Telegram</th><th>Роль</th><th>Маршрут</th><th>Записать / изменить</th></tr></thead>
+    <tbody>
+    @foreach (var (u, m) in Model.Rows)
+    {
+        <tr>
+            <td>@u.Name</td>
+            <td class="text-nowrap">+@u.Phone</td>
+            <td>@(u.TelegramId is null ? "—" : "✓")</td>
+            <td>
+                <form method="post" asp-page-handler="Role">
+                    <input type="hidden" name="userId" value="@u.Id" />
+                    <select name="role" class="form-select form-select-sm" onchange="this.form.submit()">
+                        @foreach (var r in Enum.GetValues<UserRole>()) { <option value="@r" selected="@(u.Role == r)">@RoleName(r)</option> }
+                    </select>
+                </form>
+            </td>
+            <td>
+                @if (m is null) { <span class="text-muted">—</span> }
+                else
+                {
+                    <div>@m.Route.Name, @m.Stop.Name</div>
+                    <div class="small">
+                        @(m.Morning && m.Evening ? "утро и вечер" : m.Morning ? "утро" : "вечер") ·
+                        @if (m.Status == MembershipStatus.Regular) { <span class="text-success">постоянный с @WorkCalendar.Format(m.From)</span> }
+                        else { <span class="text-warning">в очереди</span> }
+                    </div>
+                    <div class="d-flex gap-1 mt-1">
+                        @if (m.Status == MembershipStatus.Waitlist)
+                        {
+                            <form method="post" asp-page-handler="Promote"><input type="hidden" name="membershipId" value="@m.Id" /><button class="btn btn-sm btn-outline-success">Дать место</button></form>
+                        }
+                        <form method="post" asp-page-handler="Leave" onsubmit="return confirm('Снять с маршрута?')"><input type="hidden" name="userId" value="@u.Id" /><button class="btn btn-sm btn-outline-secondary">Снять</button></form>
+                    </div>
+                }
+            </td>
+            <td>
+                <form method="post" asp-page-handler="Join" class="d-flex gap-1">
+                    <input type="hidden" name="userId" value="@u.Id" />
+                    <select name="routeStop" class="form-select form-select-sm">
+                        @foreach (var s in Model.Stops)
+                        {
+                            <option value="@s.RouteId:@s.Id" selected="@(m?.StopId == s.Id)">@s.Route.Name — @s.Name</option>
+                        }
+                    </select>
+                    <select name="dirs" class="form-select form-select-sm" style="width:auto">
+                        <option value="both">утро+вечер</option><option value="morning">утро</option><option value="evening">вечер</option>
+                    </select>
+                    <button class="btn btn-sm btn-outline-primary">OK</button>
+                </form>
+            </td>
+        </tr>
+    }
+    </tbody>
+</table>
+</div>
