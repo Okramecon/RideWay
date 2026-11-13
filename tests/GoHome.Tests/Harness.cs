@@ -30,6 +30,7 @@ public sealed class Harness : IDisposable
     public ServiceProvider Services { get; }
     public FakeClock Clock { get; } = new();
     public FakeNotifier Notifier { get; } = new();
+    public FakeRouting Routing { get; } = new();
 
     // Понедельник 16.11.2026, 10:00 — изменения на вторник ещё открыты.
     public static readonly DateOnly Monday = new(2026, 11, 16);
@@ -51,6 +52,11 @@ public sealed class Harness : IDisposable
         sc.AddScoped<TripOpsService>();
         sc.AddScoped<BillingService>();
         sc.AddScoped<MetricsService>();
+        sc.AddScoped<CarService>();
+        sc.AddSingleton(Routing);
+        sc.AddSingleton<IRoutingProvider>(Routing);
+        sc.AddScoped<RouteMapService>();
+        sc.Configure<StorageOptions>(o => o.Path = Path.Combine(Path.GetTempPath(), $"gohome-media-{Guid.NewGuid():N}"));
         Services = sc.BuildServiceProvider();
 
         using var scope = Services.CreateScope();
@@ -99,5 +105,20 @@ public sealed class Harness : IDisposable
         Services.Dispose();
         Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
         try { File.Delete(_dbPath); } catch (IOException) { }
+    }
+}
+
+public class FakeRouting : IRoutingProvider
+{
+    public (RoadPath? Path, string? Error) Result { get; set; } =
+        (new RoadPath([[42.80, 74.50], [42.85, 74.55], [42.90, 74.60]], 12.3, 27), null);
+    public int Calls { get; private set; }
+    public List<(double Lat, double Lng)>? LastWaypoints { get; private set; }
+
+    public Task<(RoadPath? Path, string? Error)> BuildAsync(IReadOnlyList<(double Lat, double Lng)> waypoints, CancellationToken ct = default)
+    {
+        Calls++;
+        LastWaypoints = waypoints.ToList();
+        return Task.FromResult(Result);
     }
 }

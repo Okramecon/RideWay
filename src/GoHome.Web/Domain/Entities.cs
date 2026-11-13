@@ -65,6 +65,13 @@ public class Car
     public User? Driver { get; set; }
     /// <summary>Секрет QR-наклейки в салоне: пассажир сканирует его при посадке.</summary>
     public string BoardingCode { get; set; } = "";
+    /// <summary>Схема мест салона (формат — в SeatLayout). Пусто — типовая схема по числу мест.</summary>
+    public string Layout { get; set; } = "";
+    /// <summary>Имя файла фото салона в хранилище (отдаётся как /media/&lt;имя&gt;).</summary>
+    public string? CabinPhoto { get; set; }
+
+    public SeatLayout ParsedLayout() =>
+        SeatLayout.TryParse(Layout, out var layout, out _) ? layout! : SeatLayout.Default(Seats);
 
     public static string NewBoardingCode() =>
         Convert.ToHexStringLower(System.Security.Cryptography.RandomNumberGenerator.GetBytes(6));
@@ -79,6 +86,8 @@ public class Route
     public decimal PricePerRide { get; set; }
     public bool IsActive { get; set; } = true;
     public List<Stop> Stops { get; set; } = [];
+    /// <summary>Линия маршрута по дорогам: JSON-массив [[lat,lng],…]. Пусто — рисуем прямые между остановками.</summary>
+    public string? PathJson { get; set; }
 }
 
 public class Stop
@@ -92,6 +101,13 @@ public class Stop
     public TimeOnly MorningTime { get; set; }
     /// <summary>Время высадки вечером (из офиса).</summary>
     public TimeOnly EveningTime { get; set; }
+    /// <summary>Точное место остановки на карте. Null — ещё не поставлено.</summary>
+    public double? Lat { get; set; }
+    public double? Lng { get; set; }
+    /// <summary>Ориентир: «у входа в ТЦ», «напротив аптеки».</summary>
+    public string? Note { get; set; }
+
+    public bool HasLocation => Lat is not null && Lng is not null;
 }
 
 /// <summary>Запись пассажира на маршрут как постоянного (или в очередь).</summary>
@@ -106,6 +122,8 @@ public class Membership
     public Stop Stop { get; set; } = null!;
     public bool Morning { get; set; }
     public bool Evening { get; set; }
+    /// <summary>Закреплённое место (одно на утро и вечер). Null — в очереди ожидания.</summary>
+    public int? SeatNumber { get; set; }
     public MembershipStatus Status { get; set; }
     public DateOnly From { get; set; }
     public DateOnly? To { get; set; }
@@ -127,6 +145,7 @@ public class OneOffBooking
     public Stop Stop { get; set; } = null!;
     public DateOnly Date { get; set; }
     public Direction Direction { get; set; }
+    public int? SeatNumber { get; set; }
     public BookingStatus Status { get; set; }
     public DateTime CreatedAt { get; set; }
 }

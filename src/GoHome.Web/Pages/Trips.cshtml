@@ -42,13 +42,14 @@
             }
             else if (t.IsWorkday)
             {
+                <partial name="_SeatMap" model="t" />
                 <table class="table table-sm align-middle mb-2">
                     @foreach (var e in t.Entries)
                     {
                         var time = t.Direction == Direction.Morning ? e.Stop.MorningTime : e.Stop.EveningTime;
                         <tr class="@(e.IsAbsent ? "text-muted" : "")">
                             <td class="text-nowrap">@time.ToString("HH:mm")</td>
-                            <td>@e.Stop.Name</td>
+                            <td>@(e.SeatNumber is { } sn ? $"№{sn} · " : "")@e.Stop.Name</td>
                             <td>@e.Name @if (!e.IsRegular) { <span class="badge bg-info">разово</span> } <div class="small text-muted">+@e.Phone</div></td>
                             <td class="text-end text-nowrap">
                                 @if (e.IsAbsent)

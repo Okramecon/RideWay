@@ -1,0 +1,42 @@
+@model TripRoster
+@{
+    var owners = Model.SeatOwners;
+    var absent = Model.Entries.Where(e => e.IsAbsent && e.SeatNumber is not null).ToDictionary(e => e.SeatNumber!.Value);
+    string Short(string name)
+    {
+        var p = name.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        return p.Length > 1 ? $"{p[0]} {p[1][0]}." : name;
+    }
+}
+<div class="cabin" style="grid-template-columns:repeat(@Model.Layout.Cols, 68px)">
+    @foreach (var row in Model.Layout.Rows)
+    {
+        foreach (var c in row)
+        {
+            if (c.Kind == CellKind.Driver)
+            {
+                <div class="seat wheel" title="Водитель">🚘</div>
+            }
+            else if (c.Kind == CellKind.Empty)
+            {
+                <div class="seat gap"></div>
+            }
+            else if (owners.TryGetValue(c.Number, out var o))
+            {
+                var css = o.Result == RideResult.Boarded ? "boarded" : o.Result == RideResult.NoShow ? "noshow" : o.IsRegular ? "taken" : "oneoff";
+                <div class="seat @css" title="@o.Name · @(o.IsRegular ? "постоянный" : "разовая") · +@o.Phone">@c.Number<small>@Short(o.Name)</small></div>
+            }
+            else if (absent.TryGetValue(c.Number, out var a))
+            {
+                <div class="seat absent" title="@a.Name — не едет, место свободно">@c.Number<small>не едет</small></div>
+            }
+            else
+            {
+                <div class="seat free">@c.Number</div>
+            }
+        }
+    }
+</div>
+<div class="cabin-legend">
+    <span><i class="free"></i>свободно</span><span><i class="taken"></i>постоянный</span><span><i class="oneoff"></i>разово</span><span><i class="boarded"></i>сел</span>
+</div>

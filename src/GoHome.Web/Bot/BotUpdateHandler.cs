@@ -25,8 +25,11 @@ public class BotUpdateHandler(ITelegramBotClient bot, AppDbContext db, TripOpsSe
     /// <summary>HTTPS-адрес Mini App или null, если App:PublicUrl не настроен (Telegram требует HTTPS).</summary>
     public static string? MiniAppUrl(IConfiguration config) =>
         config["App:PublicUrl"] is { } u && u.StartsWith("https://", StringComparison.OrdinalIgnoreCase)
-            ? u.TrimEnd('/') + "/app/"
+            ? u.TrimEnd('/') + "/app/?v=" + BuildId
             : null;
+
+    /// <summary>Меняется при каждом запуске приложения: новый адрес заставляет Telegram заново загрузить страницу, а не взять её из кэша.</summary>
+    private static readonly string BuildId = DateTime.UtcNow.Ticks.ToString("x");
 
     public async Task HandleAsync(Update update, CancellationToken ct)
     {

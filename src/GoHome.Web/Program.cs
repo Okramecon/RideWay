@@ -26,6 +26,17 @@ services.AddScoped<BookingService>();
 services.AddScoped<TripOpsService>();
 services.AddScoped<BillingService>();
 services.AddScoped<MetricsService>();
+services.AddScoped<CarService>();
+services.Configure<RoutingOptions>(config.GetSection(RoutingOptions.Section));
+services.AddHttpClient<IRoutingProvider, OsrmRoutingProvider>(c =>
+{
+    c.Timeout = TimeSpan.FromSeconds(20);
+    c.DefaultRequestHeaders.UserAgent.ParseAdd("RideWayPilot/1.0");
+});
+services.AddScoped<RouteMapService>();
+services.Configure<StorageOptions>(config.GetSection(StorageOptions.Section));
+// Относительный путь хранилища считаем от папки приложения.
+services.PostConfigure<StorageOptions>(o => o.Path = Path.GetFullPath(o.Path, builder.Environment.ContentRootPath));
 
 var botToken = config[$"{BotOptions.Section}:Token"];
 if (!string.IsNullOrWhiteSpace(botToken))
@@ -79,6 +90,10 @@ using (var scope = app.Services.CreateScope())
     foreach (var car in db.Cars.Where(c => c.BoardingCode == "").ToList())
         car.BoardingCode = GoHome.Web.Domain.Car.NewBoardingCode();
     await db.SaveChangesAsync();
+
+    // Схемы салонов и места у записей, созданных до появления выбора мест.
+    var clock = scope.ServiceProvider.GetRequiredService<IClock>();
+    await SeatBackfill.RunAsync(db, clock.Today);
 }
 
 if (!app.Environment.IsDevelopment())
@@ -92,8 +107,20 @@ app.UseAuthorization();
 app.MapStaticAssets();
 app.MapRazorPages().WithStaticAssets();
 app.MapGet("/health", () => Results.Ok("ok")).AllowAnonymous();
-app.MapGet("/app/",(IWebHostEnvironment env) =>
-    Results.File(Path.Combine(env.WebRootPath, "app", "index.html"), "text/html; charset=utf-8")).AllowAnonymous();
+// Mini App. Страницу не кэшируем: WebView Telegram иначе держит старую версию часами и новые функции «не появляются».
+app.MapGet("/app/", async (IWebHostEnvironment env, HttpContext ctx) =>
+{
+    var html = await File.ReadAllTextAsync(Path.Combine(env.WebRootPath, "app", "index.html"));
+    var scriptVersion = File.GetLastWriteTimeUtc(Path.Combine(env.WebRootPath, "js", "seat-editor.js")).Ticks;
+    ctx.Response.Headers.CacheControl = "no-store";
+    return Results.Content(html.Replace("/js/seat-editor.js", $"/js/seat-editor.js?v={scriptVersion}"), "text/html; charset=utf-8");
+}).AllowAnonymous();
+// Фото салона. Имена случайные (guid), поэтому отдаём без авторизации — <img> не умеет слать заголовки Telegram.
+app.MapGet("/media/{name}", (string name, CarService cars) =>
+    cars.MediaPath(name) is { } path
+        ? Results.File(path, name.EndsWith(".png") ? "image/png" : name.EndsWith(".webp") ? "image/webp" : "image/jpeg",
+            lastModified: null, entityTag: null, enableRangeProcessing: false)
+        : Results.NotFound()).AllowAnonymous();
 GoHome.Web.App.MiniAppApi.MapMiniAppApi(app);
 
 app.Run();

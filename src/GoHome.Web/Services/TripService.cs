@@ -13,7 +13,8 @@ public record RosterEntry(
     bool IsRegular,
     bool IsAbsent,
     int? OneOffBookingId,
-    RideResult? Result)
+    RideResult? Result,
+    int? SeatNumber)
 {
     /// <summary>Занимает место в машине.</summary>
     public bool TakesSeat => !IsAbsent;
@@ -26,9 +27,15 @@ public record TripRoster(
     bool IsWorkday,
     TripCancellation? Cancellation,
     DateTime? ArrivedAt,
-    List<RosterEntry> Entries)
+    List<RosterEntry> Entries,
+    SeatLayout Layout)
 {
     public int Capacity => Route.Car.Seats;
+    /// <summary>Места, занятые на этом рейсе (место постоянного пассажира с «не еду» свободно).</summary>
+    public Dictionary<int, RosterEntry> SeatOwners =>
+        Entries.Where(e => e.TakesSeat && e.SeatNumber is not null).ToDictionary(e => e.SeatNumber!.Value);
+    public HashSet<int> TakenSeats => SeatOwners.Keys.ToHashSet();
+    public List<int> FreeSeatNumbers => Layout.SeatNumbers.Where(n => !SeatOwners.ContainsKey(n)).ToList();
     public int Occupied => Entries.Count(e => e.TakesSeat);
     public int Free => Math.Max(0, Capacity - Occupied);
     public bool IsCancelled => Cancellation is not null;
@@ -78,16 +85,16 @@ public class TripService(AppDbContext db, WorkCalendar calendar, IClock clock)
 
         var entries = regulars
             .Select(m => new RosterEntry(m.UserId, m.User.Name, m.User.Phone, m.User.TelegramId, m.Stop,
-                true, absent.Contains(m.UserId), null, ResultOf(results, m.UserId)))
+                true, absent.Contains(m.UserId), null, ResultOf(results, m.UserId), m.SeatNumber))
             .Concat(oneOffs.Select(b => new RosterEntry(b.UserId, b.User.Name, b.User.Phone, b.User.TelegramId, b.Stop,
-                false, false, b.Id, ResultOf(results, b.UserId))));
+                false, false, b.Id, ResultOf(results, b.UserId), b.SeatNumber)));
 
         // Утром забираем по порядку остановок, вечером развозим в обратном.
         entries = dir == Direction.Morning
             ? entries.OrderBy(e => e.Stop.Order).ThenBy(e => e.Name)
             : entries.OrderByDescending(e => e.Stop.Order).ThenBy(e => e.Name);
 
-        return new TripRoster(route, date, dir, calendar.IsWorkday(date), cancellation, arrival?.ArrivedAt, entries.ToList());
+        return new TripRoster(route, date, dir, calendar.IsWorkday(date), cancellation, arrival?.ArrivedAt, entries.ToList(), route.Car.ParsedLayout());
     }
 
     public async Task<List<TripRoster>> GetDayAsync(DateOnly date)

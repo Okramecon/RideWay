@@ -5,6 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
 <title>RideWay</title>
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
+<link rel="stylesheet" href="/lib/leaflet/leaflet.css" />
+<script src="/lib/leaflet/leaflet.js"></script>
 <style>
   :root {
     --bg: var(--tg-theme-bg-color, #ffffff);
@@ -49,6 +51,7 @@
   .seg { display: flex; background: var(--bg2); border-radius: 10px; padding: 3px; gap: 3px; }
   .seg button { flex: 1; background: transparent; padding: 7px; font-size: 14px; }
   .seg button.active { background: var(--section); font-weight: 600; box-shadow: 0 1px 2px rgba(0,0,0,.08); }
+  .card .seg { background: var(--bg2); }
   .radio { width: 20px; height: 20px; border-radius: 50%; border: 2px solid var(--hint); flex: none; }
   .radio.on { border: 6px solid var(--accent); }
   .tabs { position: fixed; left: 0; right: 0; bottom: 0; display: flex; background: var(--section);
@@ -66,7 +69,45 @@
   .between { justify-content: space-between; }
   a { color: var(--link); text-decoration: none; }
   .scan { font-size: 17px; padding: 15px; border-radius: var(--radius); }
+  .photo { width: 100%; max-height: 240px; object-fit: cover; border-radius: 12px; display: block; margin-bottom: 10px; }
+
+  /* Карта маршрута (Leaflet + OpenStreetMap). isolation — чтобы слои карты не перекрывали QR-оверлей и вкладки */
+  .map { height: 240px; border-radius: var(--radius); overflow: hidden; margin-bottom: 10px; isolation: isolate; background: var(--bg2); }
+  .pin { position: relative; width: 28px; height: 28px; border-radius: 50%; background: var(--accent); color: var(--accent-text);
+    border: 2px solid #fff; box-shadow: 0 1px 5px rgba(0,0,0,.45); display: flex; align-items: center; justify-content: center;
+    font: 700 13px/1 system-ui, sans-serif; transition: transform .15s; }
+  .pin.office { background: #e5484d; color: #fff; }
+  .pin.sel { background: var(--ok); color: #fff; transform: scale(1.3); }
+  .pin b { position: absolute; top: -9px; right: -9px; min-width: 18px; height: 18px; padding: 0 4px; border-radius: 9px; background: #111;
+    color: #fff; font: 700 11px/18px system-ui, sans-serif; text-align: center; border: 1px solid #fff; }
+  .leaflet-tooltip { font: 600 12px system-ui, sans-serif; }
+
+  /* QR для посадки на весь экран: фон всегда белый, чтобы код читался и в тёмной теме */
+  .overlay { position: fixed; inset: 0; z-index: 20; background: #fff; color: #111; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; gap: 14px; padding: 20px; text-align: center; }
+  .overlay img { width: min(78vw, 380px); height: auto; image-rendering: pixelated; }
+  .overlay button { width: 100%; max-width: 320px; }
+
+  /* Схема салона */
+  .car { display: grid; gap: 8px; justify-content: center; width: fit-content; margin: 6px auto; padding: 16px 18px;
+    border: 2px solid var(--sep); border-radius: 34px 34px 16px 16px; background: var(--bg2); }
+  .seat { height: 48px; border-radius: 10px; border: 2px solid var(--sep); display: flex; flex-direction: column; align-items: center;
+    justify-content: center; font-weight: 700; font-size: 16px; line-height: 1.1; background: var(--section); user-select: none; min-width: 0; }
+  .seat small { font-size: 9px; font-weight: 500; color: var(--hint); max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 0 2px; }
+  .seat.free { border-color: var(--ok); color: var(--ok); cursor: pointer; }
+  .seat.taken { background: var(--sep); color: var(--hint); border-color: transparent; }
+  .seat.mine { background: var(--accent); border-color: var(--accent); color: var(--accent-text); cursor: pointer; }
+  .seat.sel { background: var(--ok); border-color: var(--ok); color: #fff; }
+  .seat.wheel { border: 0; background: none; color: var(--hint); }
+  .seat.empty { visibility: hidden; }
+  .legend { display: flex; gap: 14px; justify-content: center; flex-wrap: wrap; font-size: 12px; color: var(--hint); margin-top: 6px; }
+  .legend i { display: inline-block; width: 12px; height: 12px; border-radius: 4px; border: 2px solid; vertical-align: -2px; margin-right: 4px; }
+  .legend .f { border-color: var(--ok); }
+  .legend .t { background: var(--sep); border-color: transparent; }
+  .legend .s { background: var(--ok); border-color: var(--ok); }
+  .legend .m { background: var(--accent); border-color: var(--accent); }
 </style>
+<script src="/js/seat-editor.js"></script>
 </head>
 <body>
 <main id="view"><div class="center hint">Загрузка…</div></main>
@@ -77,7 +118,14 @@
 const tg = window.Telegram?.WebApp;
 tg?.ready(); tg?.expand();
 
-const S = { me: null, tab: 'trips', routes: null, route: null, stopId: null, dirs: 'both', driver: { routeId: null, date: null, dir: null } };
+const S = {
+  me: null, tab: 'trips', routes: null, route: null, stopId: null, dirs: 'both',
+  seat: null,            // выбранное постоянное место
+  oneOff: null,          // {date, dir} — выбор места на разовую поездку
+  seat1: null,           // выбранное место на разовую поездку
+  driver: { routeId: null, date: null, dir: null, view: 'trip' },
+  back: null,
+};
 const $view = document.getElementById('view');
 const devUser = new URLSearchParams(location.search).get('dev');
 
@@ -85,7 +133,6 @@ const devUser = new URLSearchParams(location.search).get('dev');
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const hm = t => (t || '').slice(0, 5);
 const money = v => `${Math.round(v)} сом`;
-const dirName = d => d === 'Morning' ? 'утро' : 'вечер';
 const haptic = type => tg?.HapticFeedback?.notificationOccurred?.(type);
 const tap = () => tg?.HapticFeedback?.impactOccurred?.('light');
 
@@ -97,11 +144,15 @@ function toast(msg, ok = true) {
   clearTimeout(toastTimer); toastTimer = setTimeout(() => el.classList.remove('show'), 3200);
 }
 
-async function api(path, body) {
-  const headers = { 'Content-Type': 'application/json' };
-  if (tg?.initData) headers.Authorization = 'tma ' + tg.initData;
-  else if (devUser) headers['X-Dev-User'] = devUser;
-  const res = await fetch('/api/app' + path, { method: body === undefined ? 'GET' : 'POST', headers, body: body === undefined ? undefined : JSON.stringify(body) });
+function authHeaders() {
+  const h = {};
+  if (tg?.initData) h.Authorization = 'tma ' + tg.initData;
+  else if (devUser) h['X-Dev-User'] = devUser;
+  return h;
+}
+
+async function request(path, init) {
+  const res = await fetch('/api/app' + path, init);
   if (res.status === 401 || res.status === 403) {
     const err = await res.json().catch(() => ({}));
     throw Object.assign(new Error(err.message || 'Нет доступа'), { code: err.error || 'forbidden' });
@@ -109,6 +160,12 @@ async function api(path, body) {
   if (!res.ok) throw new Error('Ошибка сервера, попробуйте ещё раз');
   return res.json();
 }
+
+const api = (path, body) => request(path, {
+  method: body === undefined ? 'GET' : 'POST',
+  headers: { 'Content-Type': 'application/json', ...authHeaders() },
+  body: body === undefined ? undefined : JSON.stringify(body),
+});
 
 async function act(path, body, after) {
   try {
@@ -122,6 +179,109 @@ async function act(path, body, after) {
 function confirmBox(text) {
   return new Promise(res => tg?.showConfirm ? tg.showConfirm(text, res) : res(confirm(text)));
 }
+
+// Кнопка «Назад» Telegram: один обработчик за раз.
+function setBack(fn) {
+  clearBack();
+  S.back = fn;
+  tg?.BackButton?.onClick(fn);
+  tg?.BackButton?.show();
+}
+function clearBack() {
+  if (S.back) tg?.BackButton?.offClick(S.back);
+  S.back = null;
+  tg?.BackButton?.hide();
+}
+
+// ───────── карта ─────────
+function navUrl(kind, lat, lng) {
+  return kind === '2gis' ? `https://2gis.kg/bishkek?m=${lng},${lat}/17`
+    : `https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}&travelmode=walking`;
+}
+function openLink(url) { tg?.openLink ? tg.openLink(url) : window.open(url, '_blank'); }
+function bindNav(root) {
+  root?.querySelectorAll('[data-nav]').forEach(b => b.onclick = e => { e.preventDefault(); openLink(navUrl(b.dataset.nav, b.dataset.lat, b.dataset.lng)); });
+}
+function stopNavHtml(st) {
+  return `<div class="title">📍 ${esc(st.name)}</div>${st.note ? `<div class="hint">${esc(st.note)}</div>` : ''}
+    <div class="flex" style="margin-top:8px">
+      <button class="sm" data-nav="google" data-lat="${st.lat}" data-lng="${st.lng}">Проложить путь</button>
+      <button class="sm" data-nav="2gis" data-lat="${st.lat}" data-lng="${st.lng}">Открыть в 2ГИС</button>
+    </div>`;
+}
+
+/**
+ * Рисует маршрут: линию и пронумерованные остановки. opts: selectedId, onSelect(id), badges {stopId: число} — счётчики на остановках,
+ * view {center, zoom} — вернуть прежний вид (чтобы автообновление экрана не сбрасывало карту), onView(view) — запомнить вид.
+ * Возвращает {select(stopId)} или null, если координат нет.
+ */
+function mountMap(el, stops, path, opts = {}) {
+  const pts = stops.filter(s => s.lat != null && s.lng != null);
+  if (!el || !pts.length || typeof L === 'undefined') return null;
+  try { S.leaflet?.remove(); } catch { }
+  const map = S.leaflet = L.map(el, { scrollWheelZoom: false });
+  L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© OpenStreetMap' }).addTo(map);
+
+  const line = path && path.length > 1 ? path : pts.map(s => [s.lat, s.lng]);
+  L.polyline(line, { color: '#2481cc', weight: 5, opacity: .85 }).addTo(map);
+
+  const last = Math.max(...stops.map(s => s.order));
+  const markers = new Map();
+  for (const s of pts) {
+    const badge = opts.badges?.[s.id];
+    const icon = L.divIcon({
+      className: '', iconSize: [30, 30], iconAnchor: [15, 15],
+      html: `<div class="pin ${s.id === opts.selectedId ? 'sel' : ''} ${s.order === last ? 'office' : ''}">${s.order}${badge ? `<b>${badge}</b>` : ''}</div>`,
+    });
+    const mk = L.marker([s.lat, s.lng], { icon, title: s.name }).addTo(map).bindTooltip(esc(s.name), { direction: 'top', offset: [0, -16] });
+    if (opts.onSelect) mk.on('click', () => opts.onSelect(s.id));
+    markers.set(s.id, mk);
+  }
+
+  const bounds = L.latLngBounds([...line, ...pts.map(s => [s.lat, s.lng])]);
+  const fit = () => {
+    map.invalidateSize();
+    if (opts.view) map.setView(opts.view.center, opts.view.zoom, { animate: false });
+    else map.fitBounds(bounds, { padding: [28, 28], maxZoom: 16 });
+  };
+  fit(); setTimeout(fit, 150);
+  if (opts.onView) map.on('moveend', () => opts.onView({ center: map.getCenter(), zoom: map.getZoom() }));
+
+  return {
+    select(sid) {
+      markers.forEach((mk, id) => {
+        mk.getElement()?.querySelector('.pin')?.classList.toggle('sel', id === sid);
+        mk.setZIndexOffset(id === sid ? 1000 : 0);
+      });
+    },
+  };
+}
+
+// ───────── схема салона ─────────
+const WHEEL = `<svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="2.5"/><path d="M3.5 10.5 9.6 11M20.5 10.5 14.4 11M12 14.5V21"/></svg>`;
+
+/** grid — ответ API: [[{type, number, state, who}]]. sel — выбранное место. wide — с подписями (водителю). */
+function seatMapHtml(grid, sel, wide = false) {
+  const cols = grid[0].length;
+  const cells = grid.flat().map(c => {
+    if (c.type === 'driver') return `<div class="seat wheel" title="Водитель">${WHEEL}</div>`;
+    if (c.type === 'empty') return `<div class="seat empty"></div>`;
+    const pickable = c.state === 'free' || c.state === 'mine';
+    const cls = c.state === 'mine' && c.number === sel ? 'mine' : c.number === sel && pickable ? 'sel' : c.state;
+    return `<div class="seat ${cls}" ${pickable ? `data-seat="${c.number}"` : ''}>${c.number}${c.who ? `<small>${esc(c.who)}</small>` : ''}</div>`;
+  }).join('');
+  return `<div class="car" style="grid-template-columns:repeat(${cols},${wide ? 64 : 52}px)">${cells}</div>
+    <div class="legend"><span><i class="f"></i>свободно</span><span><i class="t"></i>занято</span>${grid.flat().some(c => c.state === 'mine') ? '<span><i class="m"></i>ваше</span>' : ''}${sel != null ? '<span><i class="s"></i>ваш выбор</span>' : ''}</div>`;
+}
+
+/** Рисует карту в элемент и вешает выбор места. pick(number) вызывается при нажатии на свободное место. */
+function drawSeatMap(el, grid, sel, pick, wide = false) {
+  el.innerHTML = seatMapHtml(grid, sel, wide);
+  el.querySelectorAll('[data-seat]').forEach(s => s.onclick = () => { tap(); pick(+s.dataset.seat); });
+}
+
+const seatCells = grid => grid.flat().filter(c => c.type === 'seat');
+const pickableSeat = (grid, n) => seatCells(grid).some(c => c.number === n && (c.state === 'free' || c.state === 'mine'));
 
 // ───────── старт ─────────
 async function boot() {
@@ -165,13 +325,13 @@ function renderTabs() {
   const el = document.getElementById('tabs');
   el.hidden = false;
   el.innerHTML = tabs.map(([id, ic, name]) => `<button data-tab="${id}"><span class="ic">${ic}</span>${name}</button>`).join('');
-  el.onclick = e => { const b = e.target.closest('button'); if (b) { tap(); S.route = null; show(b.dataset.tab); } };
+  el.onclick = e => { const b = e.target.closest('button'); if (b) { tap(); S.route = null; S.oneOff = null; show(b.dataset.tab); } };
 }
 
 function show(tab) {
   S.tab = tab;
   document.querySelectorAll('.tabs button').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
-  tg?.BackButton?.hide();
+  clearBack();
   clearInterval(S.driverTimer);
   ({ trips: renderTrips, routes: renderRoutes, pay: renderPay, driver: renderDriver })[tab]();
 }
@@ -198,7 +358,6 @@ async function renderTrips() {
   S.me = me;
   const m = me.membership;
   const todayRiding = trips.filter(t => t.isToday && !t.isAbsent && !t.isCancelled);
-  const needBoard = todayRiding.some(t => t.result !== 'Boarded');
 
   let html = '';
   if (todayRiding.length) {
@@ -206,12 +365,14 @@ async function renderTrips() {
   }
 
   html += `<div class="card">`;
-  if (!m) html += `<div class="title">Вы пока не записаны на маршрут</div><div class="hint">Выберите маршрут и остановку — место будет закреплено за вами.</div>
+  if (!m) html += `<div class="title">Вы пока не записаны на маршрут</div><div class="hint">Выберите маршрут, остановку и место в салоне — оно будет закреплено за вами.</div>
                    <div class="spacer"></div><button class="primary" data-go="routes">Выбрать маршрут</button>`;
   else if (m.status === 'Waitlist') html += `<div class="flex between"><div class="title">${esc(m.route)}</div><span class="chip">в очереди</span></div>
                    <div class="hint">Свободных мест пока нет — сообщим, когда освободится.</div>`;
-  else html += `<div class="flex between"><div class="title">${esc(m.route)}</div><span class="chip ok">постоянно</span></div>
-                   <div class="hint">Остановка «${esc(m.stop)}» · ${m.morning && m.evening ? 'утро и вечер' : m.morning ? 'утро' : 'вечер'}</div>`;
+  else html += `<div class="flex between"><div class="title">${esc(m.route)}</div><span class="chip ok">место ${m.seat ?? '—'}</span></div>
+                   <div class="hint">Остановка «${esc(m.stop)}» · ${m.morning && m.evening ? 'утро и вечер' : m.morning ? 'утро' : 'вечер'}${m.stopNote ? ` · ${esc(m.stopNote)}` : ''}</div>
+                   ${m.stopLat != null ? `<div style="margin-top:4px"><a href="#" data-nav="google" data-lat="${m.stopLat}" data-lng="${m.stopLng}">📍 Как добраться до остановки</a> · <a href="#" data-nav="2gis" data-lat="${m.stopLat}" data-lng="${m.stopLng}">2ГИС</a></div>` : ''}
+                   <div class="spacer"></div><a href="#" data-go="routes" data-open="${m.routeId}">Показать схему салона / сменить место</a>`;
   if (me.due > 0) html += `<div class="spacer"></div><div class="flex between"><span class="hint">К оплате</span><a href="#" data-go="pay"><b>${money(me.due)}</b></a></div>`;
   html += `</div>`;
 
@@ -231,20 +392,24 @@ async function renderTrips() {
         : `<button class="sm danger" data-abs="${i}">Не еду</button>`;
       return `<div class="row ${t.isAbsent || t.isCancelled ? 'muted' : ''}">
         <div class="grow"><div class="title">${esc(t.label)}${t.isToday ? ' · сегодня' : ''}</div>
-          <div class="hint">${hm(t.time)} · ${esc(t.stop)} · ${esc(t.route)}</div></div>
+          <div class="hint">${hm(t.time)} · ${esc(t.stop)} · место ${t.seat ?? '—'}</div></div>
         ${chip}${btn}</div>`;
     }).join('') + `</div><div class="hint" style="padding:0 6px">Отметить «не еду» можно до 21:00 накануне — тогда поездка не оплачивается.</div>`;
   }
   if (m) html += `<div class="spacer"></div><button class="block danger" id="leave" style="background:var(--section)">Отписаться от маршрута</button>`;
 
   $view.innerHTML = html;
+  bindNav($view);
   document.getElementById('scan')?.addEventListener('click', scan);
-  $view.querySelectorAll('[data-go]').forEach(b => b.onclick = e => { e.preventDefault(); show(b.dataset.go); });
+  $view.querySelectorAll('[data-go]').forEach(b => b.onclick = e => {
+    e.preventDefault();
+    if (b.dataset.open) S.route = +b.dataset.open;
+    show(b.dataset.go);
+  });
   $view.querySelectorAll('[data-abs]').forEach(b => b.onclick = () => { const t = trips[b.dataset.abs]; act('/absence', { date: t.date, dir: t.dir }, renderTrips); });
   $view.querySelectorAll('[data-unabs]').forEach(b => b.onclick = () => { const t = trips[b.dataset.unabs]; act('/absence/remove', { date: t.date, dir: t.dir }, renderTrips); });
   const leave = document.getElementById('leave');
   if (leave) leave.onclick = async () => { if (await confirmBox('Перестать ездить постоянно? Место освободится для других.')) act('/membership/leave', {}, renderTrips); };
-  if (!needBoard) document.getElementById('scan')?.classList.remove('primary');
 }
 
 // ───────── Маршруты ─────────
@@ -253,65 +418,144 @@ async function renderRoutes() {
   if (S.route) return renderRoute(S.route);
   $view.innerHTML = `<h2>Маршруты</h2>` + (S.routes.length ? `<div class="list">` + S.routes.map(r => {
     const first = r.stops[0];
+    const free = Math.min(r.freeMorning, r.freeEvening);
     return `<div class="row" data-route="${r.id}" style="cursor:pointer">
       <div class="grow"><div class="title">${esc(r.name)}</div>
         <div class="hint">${first ? `от «${esc(first.name)}» в ${hm(first.morning)} · ` : ''}${money(r.price)} за поездку</div></div>
-      <span class="chip ${r.freeMorning + r.freeEvening ? 'ok' : ''}">мест: ${Math.min(r.freeMorning, r.freeEvening)}/${r.seats}</span>
+      <span class="chip ${free ? 'ok' : ''}">мест: ${free}/${r.seats}</span>
       <span class="hint">›</span></div>`;
   }).join('') + `</div>` : `<div class="card hint">Пока нет активных маршрутов.</div>`);
   $view.querySelectorAll('[data-route]').forEach(el => el.onclick = () => { tap(); renderRoute(+el.dataset.route); });
 }
 
+function backToRoutes() { S.route = null; S.oneOff = null; clearBack(); if (S.tab === 'routes') renderRoutes(); }
+function backToRoute() { S.oneOff = null; renderRoute(S.route); }
+
 async function renderRoute(id) {
   S.route = id;
-  const r = S.routes.find(x => x.id === id);
-  const mine = S.me.membership;
-  if (!S.stopId || !r.stops.some(s => s.id === S.stopId)) S.stopId = (mine?.routeId === id ? mine.stopId : r.stops[0]?.id);
-  tg?.BackButton?.offClick(backToRoutes);
-  tg?.BackButton?.onClick(backToRoutes);
-  tg?.BackButton?.show();
+  if (!S.routes) S.routes = await api('/routes');
+  if (S.oneOff) return renderOneOff(id);
+  setBack(backToRoutes);
 
-  const free = S.dirs === 'morning' ? r.freeMorning : S.dirs === 'evening' ? r.freeEvening : Math.min(r.freeMorning, r.freeEvening);
-  let html = `<div class="card"><div class="title" style="font-size:18px">${esc(r.name)}</div>
-      <div class="hint">${esc(r.car)} · мест ${r.seats} · ${money(r.price)} за поездку</div></div>
-    <h2>Ваша остановка · утро / вечер</h2><div class="list">` +
-    r.stops.map(s => `<div class="row" data-stop="${s.id}" style="cursor:pointer">
-        <div class="radio ${s.id === S.stopId ? 'on' : ''}"></div>
-        <div class="grow">${esc(s.name)}</div><span class="hint">${hm(s.morning)} / ${hm(s.evening)}</span></div>`).join('') +
-    `</div>
-    <h2>Постоянно</h2>
+  const r = S.routes.find(x => x.id === id);
+  const m = S.me.membership;
+  const mine = m && m.routeId === id && m.status === 'Regular' ? m : null;
+  if (mine) S.dirs = mine.morning && mine.evening ? 'both' : mine.morning ? 'morning' : 'evening';
+  if (!S.stopId || !r.stops.some(s => s.id === S.stopId)) S.stopId = mine ? mine.stopId : r.stops[0]?.id;
+
+  const sm = await api(`/routes/${id}/seats?morning=${S.dirs !== 'evening'}&evening=${S.dirs !== 'morning'}`);
+  if (!pickableSeat(sm.layout, S.seat)) S.seat = sm.mySeat ?? seatCells(sm.layout).find(c => c.state === 'free')?.number ?? null;
+  const hasFree = sm.free > 0 || !!mine;
+  const hasMap = r.stops.some(s => s.lat != null && s.lng != null);
+
+  $view.innerHTML = `
+    <div class="card">
+      ${sm.photo ? `<img class="photo" src="${esc(sm.photo)}" alt="Салон" />` : ''}
+      <div class="title" style="font-size:18px">${esc(r.name)}</div>
+      <div class="hint">${esc(r.car)} · мест ${r.seats} · ${money(r.price)} за поездку</div>
+    </div>
+    ${hasMap ? `<div class="map" id="routeMap"></div>` : ''}
+    <h2>Ваша остановка · утро / вечер</h2>
+    <div class="list" id="stops"></div>
+    <div class="card" id="stopInfo" hidden></div>
+    <h2>${mine ? 'Ваше постоянное место' : 'Постоянное место'}</h2>
     <div class="card">
       <div class="seg" id="dirs">
-        <button data-d="both">Утро и вечер</button><button data-d="morning">Утро</button><button data-d="evening">Вечер</button>
-      </div><div class="spacer"></div>
-      <button class="primary block" id="join">${free > 0 ? `📌 Ездить постоянно · свободно ${free}` : 'Встать в очередь'}</button>
-      <div class="hint" style="margin-top:6px">Место закрепляется за вами каждый рабочий день. Платите только за поездки.</div>
+        <button data-d="both" ${mine ? 'disabled' : ''}>Утро и вечер</button><button data-d="morning" ${mine ? 'disabled' : ''}>Утро</button><button data-d="evening" ${mine ? 'disabled' : ''}>Вечер</button>
+      </div>
+      <div id="map"></div>
+      <div class="hint" id="seatHint" style="text-align:center"></div>
+      <div class="spacer"></div>
+      <button class="primary block" id="join"></button>
+      <div class="hint" style="margin-top:6px">Место закрепляется за вами на каждый рабочий день. Платите только за поездки.</div>
     </div>
-    <h2>Разовая поездка</h2><div class="list" id="oneoff"><div class="row hint">Загрузка…</div></div>`;
-  $view.innerHTML = html;
+    <h2>Разовая поездка</h2>
+    <div class="list" id="oneoff"><div class="row hint">Загрузка…</div></div>`;
 
-  $view.querySelectorAll('[data-stop]').forEach(el => el.onclick = () => { tap(); S.stopId = +el.dataset.stop; renderRoute(id); });
+  const btn = document.getElementById('join');
+  const hint = document.getElementById('seatHint');
+  const refresh = () => {
+    drawSeatMap(document.getElementById('map'), sm.layout, S.seat, n => { S.seat = n; refresh(); });
+    const unchanged = mine && S.seat === mine.seat && S.stopId === mine.stopId;
+    hint.textContent = hasFree ? (S.seat != null ? `Выбрано место ${S.seat}` : 'Выберите место на схеме') : 'Свободных мест нет — можно встать в очередь';
+    btn.disabled = hasFree && (S.seat == null || unchanged);
+    btn.textContent = mine ? (unchanged ? 'Это ваше место' : `Сохранить: место ${S.seat}`)
+      : hasFree ? `📌 Ездить постоянно · место ${S.seat ?? '…'}` : 'Встать в очередь';
+  };
+  refresh();
+
+  // Остановку можно выбрать списком или нажатием на метку на карте; экран при этом не перерисовывается целиком.
+  let mapCtl = null;
+  const drawStops = () => {
+    document.getElementById('stops').innerHTML = r.stops.map(s => `<div class="row" data-stop="${s.id}" style="cursor:pointer">
+        <div class="radio ${s.id === S.stopId ? 'on' : ''}"></div>
+        <div class="grow">${esc(s.name)}${s.note ? `<div class="hint">${esc(s.note)}</div>` : ''}</div>
+        <span class="hint">${hm(s.morning)} / ${hm(s.evening)}</span></div>`).join('');
+    document.querySelectorAll('#stops [data-stop]').forEach(el => el.onclick = () => { tap(); pickStop(+el.dataset.stop); });
+    const st = r.stops.find(s => s.id === S.stopId);
+    const info = document.getElementById('stopInfo');
+    info.hidden = !(st && st.lat != null && st.lng != null);
+    if (!info.hidden) { info.innerHTML = stopNavHtml(st); bindNav(info); }
+  };
+  const pickStop = sid => { S.stopId = sid; mapCtl?.select(sid); drawStops(); refresh(); };
+  drawStops();
+  if (hasMap) mapCtl = mountMap(document.getElementById('routeMap'), r.stops, r.path, { selectedId: S.stopId, onSelect: sid => { tap(); pickStop(sid); } });
+
   $view.querySelectorAll('#dirs button').forEach(b => { b.classList.toggle('active', b.dataset.d === S.dirs); b.onclick = () => { tap(); S.dirs = b.dataset.d; renderRoute(id); }; });
-  document.getElementById('join').onclick = () => act('/membership',
-    { routeId: id, stopId: S.stopId, morning: S.dirs !== 'evening', evening: S.dirs !== 'morning' },
-    async r => { if (r.ok) { S.me = await api('/me'); backToRoutes(); show('trips'); } });
+  btn.onclick = () => {
+    if (mine) act('/membership/seat', { seat: S.seat, stopId: S.stopId }, async r => { if (r.ok) { S.me = await api('/me'); renderRoute(id); } });
+    else act('/membership', { routeId: id, stopId: S.stopId, morning: S.dirs !== 'evening', evening: S.dirs !== 'morning', seat: sm.free > 0 ? S.seat : null },
+      async r => { if (r.ok) { S.me = await api('/me'); backToRoutes(); show('trips'); } });
+  };
 
   const trips = await api(`/routes/${id}/trips`);
   const box = document.getElementById('oneoff');
   if (!box) return;
   box.innerHTML = trips.length ? trips.map((t, i) => `<div class="row">
       <div class="grow"><div class="title">${esc(t.label)}</div><div class="hint">отправление ${hm(t.departure)} · свободно ${t.free}</div></div>
-      <button class="sm primary" data-book="${i}">Записаться</button></div>`).join('')
+      <button class="sm primary" data-book="${i}">Выбрать место</button></div>`).join('')
     : `<div class="row hint">На ближайшие дни свободных мест нет.</div>`;
   box.querySelectorAll('[data-book]').forEach(b => b.onclick = () => {
     const t = trips[b.dataset.book];
-    act('/oneoff', { routeId: id, stopId: S.stopId, date: t.date, dir: t.dir }, r => r.ok && renderRoute(id));
+    S.oneOff = { date: t.date, dir: t.dir }; S.seat1 = null; renderRoute(id);
   });
 }
-function backToRoutes() {
-  tg?.BackButton?.offClick(backToRoutes); tg?.BackButton?.hide();
-  S.route = null;
-  if (S.tab === 'routes') renderRoutes();
+
+async function renderOneOff(id) {
+  const o = S.oneOff;
+  const r = S.routes.find(x => x.id === id);
+  setBack(backToRoute);
+  const sm = await api(`/routes/${id}/seatmap?date=${o.date}&dir=${o.dir}`);
+  if (!pickableSeat(sm.layout, S.seat1)) S.seat1 = seatCells(sm.layout).find(c => c.state === 'free')?.number ?? null;
+  if (!S.stopId || !r.stops.some(s => s.id === S.stopId)) S.stopId = r.stops[0]?.id;
+
+  $view.innerHTML = `
+    <div class="card">
+      ${sm.photo ? `<img class="photo" src="${esc(sm.photo)}" alt="Салон" />` : ''}
+      <div class="title" style="font-size:18px">${esc(r.name)}</div>
+      <div class="hint">Разовая поездка · ${esc(sm.label)} · свободно ${sm.free}</div>
+    </div>
+    <h2>Ваша остановка</h2>
+    <div class="list">${r.stops.map(s => `<div class="row" data-stop="${s.id}" style="cursor:pointer">
+        <div class="radio ${s.id === S.stopId ? 'on' : ''}"></div>
+        <div class="grow">${esc(s.name)}</div><span class="hint">${hm(s.morning)} / ${hm(s.evening)}</span></div>`).join('')}</div>
+    <h2>Выберите место</h2>
+    <div class="card">
+      <div id="map"></div>
+      <div class="spacer"></div>
+      <button class="primary block" id="book"></button>
+    </div>`;
+
+  const btn = document.getElementById('book');
+  const refresh = () => {
+    drawSeatMap(document.getElementById('map'), sm.layout, S.seat1, n => { S.seat1 = n; refresh(); });
+    btn.disabled = !sm.canBook || S.seat1 == null;
+    btn.textContent = !sm.canBook ? 'Запись на этот рейс закрыта' : S.seat1 == null ? 'Свободных мест нет' : `🎫 Забронировать место ${S.seat1}`;
+  };
+  refresh();
+  $view.querySelectorAll('[data-stop]').forEach(el => el.onclick = () => { tap(); S.stopId = +el.dataset.stop; renderOneOff(id); });
+  btn.onclick = () => act('/oneoff', { routeId: id, stopId: S.stopId, date: o.date, dir: o.dir, seat: S.seat1 },
+    r2 => { if (r2.ok) { S.oneOff = null; clearBack(); S.route = null; show('trips'); } else renderOneOff(id); });
 }
 
 // ───────── Оплата ─────────
@@ -338,11 +582,22 @@ async function renderPay() {
 }
 
 // ───────── Водитель ─────────
+function driverHead(routes, d) {
+  return (routes.length > 1 ? `<div class="seg" style="margin-bottom:8px">${routes.map(r => `<button data-r="${r.id}" class="${r.id === d.routeId ? 'active' : ''}">${esc(r.name)}</button>`).join('')}</div>` : '')
+    + `<div class="seg" style="margin-bottom:8px"><button data-view="trip" class="${d.view !== 'car' ? 'active' : ''}">Рейс</button><button data-view="car" class="${d.view === 'car' ? 'active' : ''}">Машина</button></div>`;
+}
+function bindDriverHead(d) {
+  $view.querySelectorAll('[data-r]').forEach(b => b.onclick = () => { d.routeId = +b.dataset.r; d.mapView = null; renderDriver(); });
+  $view.querySelectorAll('[data-view]').forEach(b => b.onclick = () => { tap(); d.view = b.dataset.view; renderDriver(); });
+}
+
 async function renderDriver() {
   const routes = await api('/driver/routes');
   if (!routes.length) { $view.innerHTML = `<div class="card hint">За вами не закреплена машина. Обратитесь к администратору.</div>`; return; }
   const d = S.driver;
   if (!routes.some(r => r.id === d.routeId)) d.routeId = routes[0].id;
+  if (d.view === 'car') { clearInterval(S.driverTimer); return renderDriverCar(routes); }
+
   const q = new URLSearchParams({ routeId: d.routeId });
   if (d.date) q.set('date', d.date);
   if (d.dir) q.set('dir', d.dir);
@@ -350,8 +605,7 @@ async function renderDriver() {
   d.date = t.date; d.dir = t.dir;
 
   const shift = n => { const x = new Date(d.date + 'T12:00:00'); x.setDate(x.getDate() + n); d.date = x.toISOString().slice(0, 10); renderDriver(); };
-  let html = '';
-  if (routes.length > 1) html += `<div class="seg" style="margin-bottom:8px">${routes.map(r => `<button data-r="${r.id}" class="${r.id === d.routeId ? 'active' : ''}">${esc(r.name)}</button>`).join('')}</div>`;
+  let html = driverHead(routes, d);
   html += `<div class="card">
       <div class="flex between"><button class="sm" id="prev">‹</button>
         <div class="center" style="padding:0"><div class="title">${esc(t.label)}${t.isToday ? ' · сегодня' : ''}</div>
@@ -365,6 +619,9 @@ async function renderDriver() {
   else if (t.isCancelled) html += `<div class="card"><span class="chip bad">Рейс отменён</span> <span class="hint">${esc(t.reason)}</span></div>`;
   else {
     const boarded = t.passengers.filter(p => p.result === 'Boarded').length;
+    if (t.map.stops.some(s => s.lat != null && s.lng != null))
+      html += `<h2>Маршрут · цифры — сколько человек на остановке</h2><div class="map" id="tripMap"></div>`;
+    html += `<h2>Места в салоне</h2><div class="card" id="map"></div>`;
     html += `<div class="flex between" style="margin:14px 6px 6px"><h2 style="margin:0">Пассажиры</h2>
       <span class="hint">едут ${t.occupied}/${t.capacity}${t.canMark ? ` · сели ${boarded}` : ''}</span></div>`;
     html += `<div class="list">` + (t.passengers.length ? t.passengers.map(p => {
@@ -372,22 +629,35 @@ async function renderDriver() {
         <button class="sm ${p.result === 'Boarded' ? 'on-ok' : ''}" data-m="${p.userId}" data-res="Boarded">✓</button>
         <button class="sm ${p.result === 'NoShow' ? 'on-bad' : ''}" data-m="${p.userId}" data-res="NoShow">✗</button>`;
       return `<div class="row ${p.isAbsent ? 'muted' : ''}">
-        <div class="grow"><div class="title">${esc(p.name)}${p.isRegular ? '' : ' <span class="chip acc">разово</span>'}</div>
-          <div class="hint">${hm(p.time)} · ${esc(p.stop)} · <a href="tel:+${esc(p.phone)}">+${esc(p.phone)}</a></div></div>${marks}</div>`;
+        <div class="grow"><div class="title">${p.seat != null ? `<span class="chip acc">№${p.seat}</span> ` : ''}${esc(p.name)}${p.isRegular ? '' : ' <span class="chip acc">разово</span>'}</div>
+          <div class="hint">${hm(p.time)} · ${p.stopLat != null ? `<a href="#" data-nav="google" data-lat="${p.stopLat}" data-lng="${p.stopLng}">📍 ${esc(p.stop)}</a>` : esc(p.stop)} · <a href="tel:+${esc(p.phone)}">+${esc(p.phone)}</a></div></div>${marks}</div>`;
     }).join('') : `<div class="row hint">Пассажиров нет.</div>`) + `</div>`;
-    if (t.isToday) html += `<button class="primary block" id="arrived">${t.arrivedAt ? `🏁 Прибыли в ${t.arrivedAt.slice(11, 16)} · обновить` : '🏁 Прибыли'}</button><div class="spacer"></div>`;
+    if (t.isToday) html += `<button class="block" id="showQr" style="margin-bottom:8px">📲 Показать QR для посадки</button>
+      <button class="primary block" id="arrived">${t.arrivedAt ? `🏁 Прибыли в ${t.arrivedAt.slice(11, 16)} · обновить` : '🏁 Прибыли'}</button><div class="spacer"></div>`;
     if (t.date >= new Date().toISOString().slice(0, 10)) html += `<button class="block danger" id="cancel" style="background:var(--section)">Отменить рейс</button>`;
     html += `<div class="hint" style="padding:8px 6px">Пассажиры отмечаются сами по QR в машине — галочки появятся тут. Кнопки ✓/✗ — если кто-то не смог отсканировать.</div>`;
   }
   $view.innerHTML = html;
+  bindDriverHead(d);
+  const map = document.getElementById('map');
+  if (map) drawSeatMap(map, t.layout, null, () => { }, true);
+  bindNav($view);
+  const tripMap = document.getElementById('tripMap');
+  if (tripMap) {
+    // Автообновление перерисовывает экран — запоминаем, куда водитель сдвинул карту, и возвращаем тот же вид.
+    mountMap(tripMap, t.map.stops, t.map.path, {
+      badges: Object.fromEntries(t.map.stops.map(s => [s.id, s.passengers])),
+      view: d.mapView, onView: v => { d.mapView = v; },
+    });
+  }
 
-  $view.querySelectorAll('[data-r]').forEach(b => b.onclick = () => { d.routeId = +b.dataset.r; renderDriver(); });
   document.getElementById('prev').onclick = () => shift(-1);
   document.getElementById('next').onclick = () => shift(1);
   $view.querySelectorAll('#dir button').forEach(b => { b.classList.toggle('active', b.dataset.d === d.dir); b.onclick = () => { tap(); d.dir = b.dataset.d; renderDriver(); }; });
   $view.querySelectorAll('[data-m]').forEach(b => b.onclick = () => { tap();
     act('/driver/mark', { routeId: d.routeId, date: d.date, dir: d.dir, userId: +b.dataset.m, result: b.dataset.res }, renderDriver); });
   const ref = { routeId: d.routeId, date: d.date, dir: d.dir };
+  document.getElementById('showQr')?.addEventListener('click', () => showQr(d.routeId));
   document.getElementById('arrived')?.addEventListener('click', () => act('/driver/arrived', ref, renderDriver));
   document.getElementById('cancel')?.addEventListener('click', async () => {
     if (await confirmBox('Отменить рейс? Все пассажиры получат уведомление.')) act('/driver/cancel', { ...ref, reason: '' }, renderDriver);
@@ -395,7 +665,95 @@ async function renderDriver() {
 
   // Пока открыта вкладка, подтягиваем отметки пассажиров по QR.
   clearInterval(S.driverTimer);
-  S.driverTimer = setInterval(() => S.tab === 'driver' && !document.hidden && renderDriver(), 20000);
+  S.driverTimer = setInterval(() => S.tab === 'driver' && S.driver.view !== 'car' && !document.hidden && renderDriver(), 20000);
+}
+
+// QR для посадки на весь экран — водитель показывает его пассажирам, они сканируют камерой.
+function openQr(c) {
+  const el = document.createElement('div');
+  el.className = 'overlay';
+  el.innerHTML = `<div class="title" style="font-size:20px">${esc(c.model)} · ${esc(c.plate)}</div>
+    <img src="${c.qr}" alt="QR для посадки" />
+    <div style="max-width:320px">Отсканируйте камерой телефона при посадке — поездка отметится сама</div>
+    <button class="primary">Закрыть</button>`;
+  el.onclick = e => { if (e.target.tagName !== 'IMG') el.remove(); };
+  document.body.appendChild(el);
+}
+async function showQr(routeId) {
+  try { openQr(await api('/driver/car?routeId=' + routeId)); } catch (e) { toast(e.message, false); }
+}
+
+// Машина водителя: фото салона и схема мест.
+async function renderDriverCar(routes) {
+  const d = S.driver;
+  const c = await api('/driver/car?routeId=' + d.routeId);
+  let layout = c.layout;
+
+  $view.innerHTML = driverHead(routes, d) + `
+    <h2>${esc(c.model)} · ${esc(c.plate)}</h2>
+    <div class="card">
+      <div class="title" style="margin-bottom:6px">Фото салона</div>
+      ${c.photo ? `<img class="photo" src="${esc(c.photo)}" alt="Салон" />` : `<div class="hint" style="margin-bottom:8px">Фото пока нет. Пассажиры увидят его, когда будут выбирать место.</div>`}
+      <div class="flex">
+        <button class="primary" id="pick">📷 ${c.photo ? 'Заменить фото' : 'Загрузить фото'}</button>
+        ${c.photo ? `<button class="danger" id="delPhoto">Удалить</button>` : ''}
+      </div>
+      <input type="file" id="file" accept="image/*" hidden />
+    </div>
+    <h2>QR для посадки</h2>
+    <div class="card center" style="padding:14px">
+      <img id="qrImg" src="${c.qr}" alt="QR для посадки" style="width:200px;max-width:70%;background:#fff;padding:8px;border-radius:10px;image-rendering:pixelated" />
+      <div class="hint" style="margin:6px 0 10px">Пассажиры сканируют его при посадке — поездка отметится сама. Можно показать с экрана или распечатать в админке («Машины»).</div>
+      <button class="primary" id="qrBig">Показать на весь экран</button>
+    </div>
+    <h2>Схема мест · сейчас ${c.seats}</h2>
+    <div class="card">
+      <div id="editor"></div>
+      <div class="spacer"></div>
+      <button class="primary block" id="saveLayout">Сохранить схему</button>
+      <div class="hint" style="margin-top:6px">Номера мест не меняются при правке схемы. Место, на которое записан пассажир, убрать нельзя.</div>
+    </div>`;
+  bindDriverHead(d);
+
+  const editor = SeatEditor.mount(document.getElementById('editor'), layout, v => { layout = v; });
+  document.getElementById('saveLayout').onclick = () => act('/driver/car/layout', { routeId: d.routeId, layout: editor.value }, renderDriver);
+
+  document.getElementById('qrBig').onclick = () => openQr(c);
+  document.getElementById('qrImg').onclick = () => openQr(c);
+
+  const file = document.getElementById('file');
+  document.getElementById('pick').onclick = () => file.click();
+  file.onchange = async () => {
+    const f = file.files[0];
+    if (!f) return;
+    toast('Загружаем фото…');
+    try {
+      const blob = await shrink(f);
+      const form = new FormData();
+      form.append('routeId', d.routeId);
+      form.append('file', blob, 'salon.jpg');
+      const r = await request('/driver/car/photo', { method: 'POST', headers: authHeaders(), body: form });
+      toast(r.message, r.ok);
+      if (r.ok) renderDriver();
+    } catch (e) { toast(e.message, false); }
+  };
+  document.getElementById('delPhoto')?.addEventListener('click', async () => {
+    if (await confirmBox('Удалить фото салона?')) act('/driver/car/photo/remove', { routeId: d.routeId }, renderDriver);
+  });
+}
+
+// Уменьшаем фото в браузере: с телефона оно весит 5–10 МБ, для экрана хватит 1600 px.
+async function shrink(file, max = 1600) {
+  try {
+    const bmp = await createImageBitmap(file);
+    const k = Math.min(1, max / Math.max(bmp.width, bmp.height));
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.round(bmp.width * k); canvas.height = Math.round(bmp.height * k);
+    canvas.getContext('2d').drawImage(bmp, 0, 0, canvas.width, canvas.height);
+    const blob = await new Promise(res => canvas.toBlob(res, 'image/jpeg', 0.82));
+    if (blob) return blob;
+  } catch { /* формат не поддержан браузером — отправим как есть */ }
+  return file;
 }
 
 boot();

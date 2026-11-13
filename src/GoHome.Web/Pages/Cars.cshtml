@@ -3,7 +3,10 @@
 @{ ViewData["Title"] = "Машины"; }
 
 <h1 class="h4 mb-3">Машины</h1>
-<p class="text-muted small">Водитель — пользователь с ролью «Водитель» или «Админ» (заводится на странице «Люди»).</p>
+<p class="text-muted small">
+    Водитель — пользователь с ролью «Водитель» или «Админ» (заводится на странице <a asp-page="/Drivers">«Водители»</a>).
+    Число мест задаётся при создании, дальше его определяет схема салона ниже.
+</p>
 
 <div class="table-responsive">
 <table class="table table-sm align-middle bg-white">
@@ -15,7 +18,10 @@
         <tr>
             <td><input form="@f" name="model" value="@c?.Model" class="form-control form-control-sm" placeholder="Toyota Camry" required /></td>
             <td><input form="@f" name="plate" value="@c?.Plate" class="form-control form-control-sm" placeholder="01KG 123ABC" required /></td>
-            <td><input form="@f" name="seats" type="number" min="1" max="50" value="@(c?.Seats ?? 4)" class="form-control form-control-sm" /></td>
+            <td>
+                @if (c is null) { <input form="@f" name="seats" type="number" min="1" max="20" value="4" class="form-control form-control-sm" /> }
+                else { <input form="@f" name="seats" type="hidden" value="@c.Seats" /><span>@c.Seats</span> }
+            </td>
             <td>
                 <select form="@f" name="driverUserId" class="form-select form-select-sm">
                     <option value="">—</option>
@@ -37,31 +43,75 @@
 </table>
 </div>
 
+@foreach (var c in Model.Cars)
+{
+    <div class="border rounded bg-white p-3 mb-3" id="salon-@c.Id">
+        <h2 class="h5 mb-3">@c.Model · @c.Plate <span class="text-muted fs-6">водитель: @(c.Driver?.Name ?? "не назначен")</span></h2>
+        <div class="row g-4">
+            <div class="col-md-4">
+                <div class="fw-semibold mb-1">Фото салона</div>
+                @if (c.CabinPhoto is not null)
+                {
+                    <a href="/media/@c.CabinPhoto" target="_blank"><img src="/media/@c.CabinPhoto" alt="Салон @c.Plate" class="img-fluid rounded mb-2" /></a>
+                }
+                else
+                {
+                    <div class="text-muted small mb-2">Фото нет. Его загружает водитель в приложении или админ здесь — пассажиры увидят его при выборе места.</div>
+                }
+                <form method="post" asp-page-handler="Photo" enctype="multipart/form-data" class="d-flex gap-1">
+                    <input type="hidden" name="id" value="@c.Id" />
+                    <input type="file" name="photo" accept="image/jpeg,image/png,image/webp" class="form-control form-control-sm" required />
+                    <button class="btn btn-sm btn-outline-primary text-nowrap">Загрузить</button>
+                </form>
+                @if (c.CabinPhoto is not null)
+                {
+                    <form method="post" asp-page-handler="RemovePhoto" onsubmit="return confirm('Удалить фото?')" class="mt-1">
+                        <input type="hidden" name="id" value="@c.Id" />
+                        <button class="btn btn-sm btn-link text-danger p-0">Удалить фото</button>
+                    </form>
+                }
+            </div>
+            <div class="col-md-5">
+                <div class="fw-semibold mb-1">Схема мест · сейчас @c.Seats</div>
+                <form method="post" asp-page-handler="Layout" class="seat-editor-form">
+                    <input type="hidden" name="id" value="@c.Id" />
+                    <input type="hidden" name="layout" value="@c.ParsedLayout()" />
+                    <div class="seat-editor" data-layout="@c.ParsedLayout()"></div>
+                    <button class="btn btn-sm btn-primary mt-2">Сохранить схему</button>
+                    <div class="text-muted small mt-1">Номера мест закреплены за сиденьями. Место с записанным пассажиром убрать нельзя.</div>
+                </form>
+            </div>
+            <div class="col-md-3 text-center">
+                <div class="fw-semibold mb-1">QR для посадки</div>
+                <img src="@Url.Page("/Cars", "Qr", new { id = c.Id })" alt="QR @c.Plate" class="img-fluid" style="max-width:180px" />
+                <div class="small text-muted mb-1">RideWay · отсканируйте при посадке</div>
+                <form method="post" asp-page-handler="RegenerateQr" onsubmit="return confirm('Старая наклейка перестанет работать. Перевыпустить?')">
+                    <input type="hidden" name="id" value="@c.Id" />
+                    <button class="btn btn-sm btn-link">Перевыпустить</button>
+                </form>
+            </div>
+        </div>
+    </div>
+}
+
 @if (Model.Cars.Count > 0)
 {
-    <h2 class="h5 mt-4">QR-наклейки для посадки</h2>
-    <p class="text-muted small mb-2">
-        Распечатайте и наклейте в салоне. Пассажир сканирует QR камерой телефона или кнопкой «Я в машине» в приложении — поездка отмечается сама
+    <p class="text-muted small">
+        QR: распечатайте и наклейте в салоне. Пассажир сканирует его камерой телефона или кнопкой «Я в машине» в приложении — поездка отмечается сама
         (за 30 минут до времени посадки и в течение часа после).
         @if (Model.BotUsername is null)
         {
             <br /><span class="text-warning">Бот не запущен — QR пока содержит только код (сработает из приложения, но не с камеры). Запустите бота и обновите страницу.</span>
         }
     </p>
-    <div class="row g-3">
-        @foreach (var c in Model.Cars)
-        {
-            <div class="col-6 col-md-4 col-lg-3">
-                <div class="border rounded bg-white p-2 text-center h-100">
-                    <img src="@Url.Page("/Cars", "Qr", new { id = c.Id })" alt="QR @c.Plate" class="img-fluid" />
-                    <div class="fw-semibold">@c.Plate</div>
-                    <div class="small text-muted mb-2">RideWay · отсканируйте при посадке</div>
-                    <form method="post" asp-page-handler="RegenerateQr" onsubmit="return confirm('Старая наклейка перестанет работать. Перевыпустить?')">
-                        <input type="hidden" name="id" value="@c.Id" />
-                        <button class="btn btn-sm btn-link">Перевыпустить</button>
-                    </form>
-                </div>
-            </div>
-        }
-    </div>
+}
+
+@section Scripts {
+    <script src="~/js/seat-editor.js"></script>
+    <script>
+        document.querySelectorAll('.seat-editor-form').forEach(form => {
+            const input = form.querySelector('input[name=layout]');
+            SeatEditor.mount(form.querySelector('.seat-editor'), input.value, v => { input.value = v; });
+        });
+    </script>
 }

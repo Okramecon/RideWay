@@ -11,6 +11,7 @@ COPY --from=build /app .
 ENV ASPNETCORE_URLS=http://+:8080 \
     ConnectionStrings__Default="Data Source=/data/gohome.db" \
     DataProtection__KeysPath=/data/keys \
+    Storage__Path=/data/uploads \
     TZ=Asia/Bishkek
 VOLUME /data
 EXPOSE 8080

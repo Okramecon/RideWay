@@ -85,8 +85,15 @@ namespace GoHome.Web.Data.Migrations
                         .IsRequired()
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("CabinPhoto")
+                        .HasColumnType("TEXT");
+
                     b.Property<int?>("DriverUserId")
                         .HasColumnType("INTEGER");
+
+                    b.Property<string>("Layout")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("Model")
                         .IsRequired()
@@ -125,6 +132,9 @@ namespace GoHome.Web.Data.Migrations
                         .HasColumnType("INTEGER");
 
                     b.Property<int>("RouteId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int?>("SeatNumber")
                         .HasColumnType("INTEGER");
 
                     b.Property<int>("Status")
@@ -166,6 +176,9 @@ namespace GoHome.Web.Data.Migrations
                         .HasColumnType("INTEGER");
 
                     b.Property<int>("RouteId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int?>("SeatNumber")
                         .HasColumnType("INTEGER");
 
                     b.Property<int>("Status")
@@ -274,6 +287,9 @@ namespace GoHome.Web.Data.Migrations
                         .IsRequired()
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("PathJson")
+                        .HasColumnType("TEXT");
+
                     b.Property<double>("PricePerRide")
                         .HasColumnType("REAL");
 
@@ -293,11 +309,20 @@ namespace GoHome.Web.Data.Migrations
                     b.Property<TimeOnly>("EveningTime")
                         .HasColumnType("TEXT");
 
+                    b.Property<double?>("Lat")
+                        .HasColumnType("REAL");
+
+                    b.Property<double?>("Lng")
+                        .HasColumnType("REAL");
+
                     b.Property<TimeOnly>("MorningTime")
                         .HasColumnType("TEXT");
 
                     b.Property<string>("Name")
                         .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Note")
                         .HasColumnType("TEXT");
 
                     b.Property<int>("Order")

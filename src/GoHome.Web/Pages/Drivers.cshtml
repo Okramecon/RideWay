@@ -1,0 +1,70 @@
+@page
+@model DriversModel
+@{
+    ViewData["Title"] = "Водители";
+    string RoleName(UserRole r) => r switch { UserRole.Driver => "Водитель", UserRole.Admin => "Админ", _ => "Пассажир" };
+}
+
+<h1 class="h4 mb-3">Водители <span class="text-muted fs-6">@Model.Rows.Count</span></h1>
+
+<form method="post" asp-page-handler="Create" class="row g-2 align-items-end border rounded bg-white p-3 mb-3">
+    <div class="col-md-4"><label class="form-label small">Имя</label><input name="name" class="form-control" required /></div>
+    <div class="col-md-3"><label class="form-label small">Телефон</label><input name="phone" class="form-control" placeholder="0555 12 34 56" required /></div>
+    <div class="col-md-2">
+        <label class="form-label small">Роль</label>
+        <select name="role" class="form-select">
+            <option value="Driver">Водитель</option><option value="Admin">Админ</option>
+        </select>
+    </div>
+    <div class="col-md-auto"><button class="btn btn-primary">Добавить водителя</button></div>
+    <div class="col-12 text-muted small">
+        Водитель входит в бота по этому номеру и получает вкладку «Водитель»: список пассажиров, схему мест, отметки, фото салона.
+        Машину и маршрут закрепляют на странице <a asp-page="/Cars">«Машины»</a>. Админ — водитель, который видит все маршруты.
+    </div>
+</form>
+
+<div class="table-responsive">
+<table class="table table-sm align-middle bg-white">
+    <thead><tr><th>Имя</th><th>Телефон</th><th>Telegram</th><th>Роль</th><th>Машина</th><th>Маршрут</th><th>Салон</th><th></th></tr></thead>
+    <tbody>
+    @foreach (var row in Model.Rows)
+    {
+        var u = row.User;
+        <tr>
+            <td>@u.Name</td>
+            <td class="text-nowrap">+@u.Phone</td>
+            <td>@(u.TelegramId is null ? "—" : "✓")</td>
+            <td>
+                <form method="post" asp-page-handler="Role">
+                    <input type="hidden" name="userId" value="@u.Id" />
+                    <select name="role" class="form-select form-select-sm" onchange="this.form.submit()">
+                        <option value="Driver" selected="@(u.Role == UserRole.Driver)">Водитель</option>
+                        <option value="Admin" selected="@(u.Role == UserRole.Admin)">Админ</option>
+                    </select>
+                </form>
+            </td>
+            <td>
+                @if (row.Car is { } car) { <a asp-page="/Cars" asp-fragment="salon-@car.Id">@car.Model @car.Plate</a> }
+                else { <span class="text-warning">не закреплена</span> }
+            </td>
+            <td>@(row.RouteName ?? "—")</td>
+            <td class="small">
+                @if (row.Car is { } c)
+                {
+                    <span>мест @c.Seats</span>
+                    <span class="@(c.CabinPhoto is null ? "text-muted" : "text-success")">· @(c.CabinPhoto is null ? "фото нет" : "фото есть")</span>
+                }
+                else { <span class="text-muted">—</span> }
+            </td>
+            <td>
+                <form method="post" asp-page-handler="Role" onsubmit="return confirm('Сделать пассажиром?')">
+                    <input type="hidden" name="userId" value="@u.Id" /><input type="hidden" name="role" value="Passenger" />
+                    <button class="btn btn-sm btn-link text-nowrap">→ пассажир</button>
+                </form>
+            </td>
+        </tr>
+    }
+    @if (Model.Rows.Count == 0) { <tr><td colspan="8" class="text-muted">Пока нет водителей.</td></tr> }
+    </tbody>
+</table>
+</div>

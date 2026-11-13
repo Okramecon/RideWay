@@ -63,7 +63,7 @@ else
             <p class="text-muted small mb-2">Порядок — как едем утром. Последняя остановка — офис: её утреннее время — плановое прибытие (для метрики опозданий), вечернее — отправление из офиса.</p>
             <div class="table-responsive">
             <table class="table table-sm align-middle">
-                <thead><tr><th style="width:5rem">№</th><th>Название</th><th style="width:8rem">Утро</th><th style="width:8rem">Вечер</th><th></th></tr></thead>
+                <thead><tr><th style="width:5rem">№</th><th>Название</th><th>Ориентир</th><th style="width:8rem">Утро</th><th style="width:8rem">Вечер</th><th style="width:5rem">На карте</th><th></th></tr></thead>
                 <tbody>
                 @foreach (var s in r.Stops.OrderBy(s => s.Order).Cast<Stop?>().Append(null))
                 {
@@ -71,8 +71,10 @@ else
                     <tr>
                         <td><input form="@f" name="order" type="number" value="@(s?.Order ?? r.Stops.Count + 1)" class="form-control form-control-sm" /></td>
                         <td><input form="@f" name="name" value="@s?.Name" class="form-control form-control-sm" placeholder="Название остановки" required /></td>
+                        <td><input form="@f" name="note" value="@s?.Note" class="form-control form-control-sm" placeholder="у входа в ТЦ…" /></td>
                         <td><input form="@f" name="morningTime" type="time" value="@(s?.MorningTime.ToString("HH:mm") ?? "07:30")" class="form-control form-control-sm" /></td>
                         <td><input form="@f" name="eveningTime" type="time" value="@(s?.EveningTime.ToString("HH:mm") ?? "18:30")" class="form-control form-control-sm" /></td>
+                        <td>@if (s is null) { <span></span> } else if (s.HasLocation) { <span class="text-success" title="@s.Lat, @s.Lng">📍 есть</span> } else { <span class="text-warning">нет</span> }</td>
                         <td class="text-nowrap">
                             <form id="@f" method="post" asp-page-handler="SaveStop" class="d-inline">
                                 <input type="hidden" name="routeId" value="@r.Id" /><input type="hidden" name="stopId" value="@s?.Id" />
@@ -92,5 +94,130 @@ else
             </table>
             </div>
         </div>
+
+        <div class="border rounded bg-white p-3 mt-3" id="mapCard">
+            <h2 class="h5">Карта и места остановок</h2>
+            <p class="text-muted small mb-2">
+                Выберите остановку в списке и нажмите на карте, где она находится. Метки можно перетаскивать.
+                Пассажиры увидят маршрут на карте и смогут проложить путь до своей остановки.
+                «Построить по дорогам» рисует линию по улицам (серверу нужен интернет); без неё между остановками идут прямые.
+            </p>
+            <div class="d-flex flex-wrap gap-2 align-items-center mb-2">
+                <select id="stopSelect" class="form-select form-select-sm" style="width:auto;max-width:100%"></select>
+                <button type="button" id="removePin" class="btn btn-sm btn-outline-secondary">Убрать с карты</button>
+                <button type="button" id="buildPath" class="btn btn-sm btn-primary">Построить по дорогам</button>
+                <button type="button" id="clearPath" class="btn btn-sm btn-outline-secondary">Прямые линии</button>
+                <span id="mapStatus" class="small text-muted"></span>
+            </div>
+            <div id="adminMap" style="height:440px;border-radius:8px;isolation:isolate"></div>
+            <div class="small text-muted mt-1">Серая пунктирная линия — прямые между остановками, синяя сплошная — по дорогам. Красная метка — последняя остановка (офис).</div>
+        </div>
+    }
+}
+
+@section Styles {
+    <link rel="stylesheet" href="~/lib/leaflet/leaflet.css" />
+}
+
+@section Scripts {
+    @if (Model.Current is { } cur)
+    {
+        <script src="~/lib/leaflet/leaflet.js"></script>
+        <script>
+            const ROUTE = @Json.Serialize(new
+            {
+                id = cur.Id,
+                stops = cur.Stops.OrderBy(s => s.Order).Select(s => new { s.Id, s.Order, s.Name, s.Lat, s.Lng }),
+                path = GoHome.Web.Services.RouteMapService.ParsePath(cur.PathJson),
+            });
+            const token = document.querySelector('input[name="__RequestVerificationToken"]').value;
+            const status = document.getElementById('mapStatus');
+            const select = document.getElementById('stopSelect');
+            const located = s => s.lat != null && s.lng != null;
+            const lastOrder = Math.max(...ROUTE.stops.map(s => s.order));
+
+            const map = L.map('adminMap').setView([42.8746, 74.5698], 12);   // Бишкек
+            L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© OpenStreetMap' }).addTo(map);
+            let line = null, markers = [];
+
+            async function post(handler, data) {
+                const res = await fetch('?handler=' + handler, {
+                    method: 'POST',
+                    headers: { 'RequestVerificationToken': token, 'Content-Type': 'application/x-www-form-urlencoded' },
+                    body: new URLSearchParams({ routeId: ROUTE.id, ...data }),
+                });
+                if (!res.ok) throw new Error('Ошибка сервера (' + res.status + ')');
+                return res.json();
+            }
+            const say = (msg, ok = true) => { status.textContent = msg; status.className = 'small ' + (ok ? 'text-success' : 'text-danger'); };
+
+            function pin(s, selected) {
+                return L.divIcon({ className: '', iconSize: [30, 30], iconAnchor: [15, 15],
+                    html: `<div class="pin ${selected ? 'sel' : ''} ${s.order === lastOrder ? 'office' : ''}">${s.order}</div>` });
+            }
+
+            function drawLine() {
+                line?.remove();
+                const byRoad = ROUTE.path.length > 1;
+                const coords = byRoad ? ROUTE.path : ROUTE.stops.filter(located).map(s => [s.lat, s.lng]);
+                if (coords.length > 1)
+                    line = L.polyline(coords, { color: byRoad ? '#0d6efd' : '#6c757d', weight: 5, opacity: .85, dashArray: byRoad ? null : '6 8' }).addTo(map);
+            }
+
+            function drawMarkers() {
+                markers.forEach(m => m.remove());
+                markers = [];
+                for (const s of ROUTE.stops.filter(located)) {
+                    const m = L.marker([s.lat, s.lng], { icon: pin(s, String(s.id) === select.value), draggable: true, title: s.name }).addTo(map);
+                    m.bindTooltip(s.name, { direction: 'top', offset: [0, -16] });
+                    m.on('click', () => { select.value = s.id; drawMarkers(); });
+                    m.on('dragend', () => { const p = m.getLatLng(); save(s, p.lat, p.lng); });
+                    markers.push(m);
+                }
+            }
+
+            function fillSelect(keep) {
+                select.innerHTML = ROUTE.stops.map(s => `<option value="${s.id}">${s.order}. ${s.name}${located(s) ? ' 📍' : ' — не на карте'}</option>`).join('');
+                if (keep) select.value = keep;
+            }
+
+            async function save(stop, lat, lng) {
+                try {
+                    const r = await post('StopLocation', { stopId: stop.id, lat: lat == null ? '' : String(lat), lng: lng == null ? '' : String(lng) });
+                    say(r.message, r.ok);
+                    if (!r.ok) return redraw();
+                    stop.lat = lat; stop.lng = lng;
+                    ROUTE.path = [];                                   // остановки сдвинулись — линия по дорогам устарела
+                    // дальше — на следующую остановку, которой ещё нет на карте
+                    const next = ROUTE.stops.find(s => !located(s) && s.order > stop.order) ?? ROUTE.stops.find(s => !located(s));
+                    fillSelect(next ? next.id : stop.id);
+                    redraw();
+                } catch (e) { say(e.message, false); redraw(); }
+            }
+
+            function redraw() { drawLine(); drawMarkers(); }
+
+            map.on('click', e => {
+                const stop = ROUTE.stops.find(s => String(s.id) === select.value);
+                if (stop) save(stop, +e.latlng.lat.toFixed(6), +e.latlng.lng.toFixed(6));
+            });
+            document.getElementById('removePin').onclick = () => {
+                const stop = ROUTE.stops.find(s => String(s.id) === select.value);
+                if (stop && located(stop)) save(stop, null, null);
+            };
+            document.getElementById('buildPath').onclick = async () => {
+                say('Строим маршрут по дорогам…');
+                try { const r = await post('BuildPath', {}); say(r.message, r.ok); ROUTE.path = r.path; redraw(); } catch (e) { say(e.message, false); }
+            };
+            document.getElementById('clearPath').onclick = async () => {
+                try { const r = await post('ClearPath', {}); say(r.message, r.ok); ROUTE.path = r.path; redraw(); } catch (e) { say(e.message, false); }
+            };
+            select.onchange = drawMarkers;
+
+            fillSelect((ROUTE.stops.find(s => !located(s)) ?? ROUTE.stops[0])?.id);
+            redraw();
+            const pts = ROUTE.stops.filter(located).map(s => [s.lat, s.lng]);
+            if (pts.length) map.fitBounds(L.latLngBounds(ROUTE.path.length > 1 ? ROUTE.path : pts), { padding: [30, 30], maxZoom: 16 });
+        </script>
     }
 }
