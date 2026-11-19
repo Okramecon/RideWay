@@ -15,7 +15,8 @@ PROFILE="tunnel"
 dc() { $SUDO docker compose --profile "$PROFILE" "$@"; }
 
 # ── 1. Подкачка: у e2-micro 1 ГБ памяти, 2 ГБ swap страхуют от нехватки ──
-if ! swapon --show 2>/dev/null | grep -q .; then
+# /proc/swaps, а не swapon --show: у обычного пользователя Debian /usr/sbin нет в PATH, и swapon «не находится».
+if [ "$(wc -l < /proc/swaps)" -le 1 ] && [ ! -f /swapfile ]; then
   say "Создаю файл подкачки 2 ГБ"
   if $SUDO fallocate -l 2G /swapfile && $SUDO chmod 600 /swapfile && $SUDO mkswap /swapfile >/dev/null && $SUDO swapon /swapfile; then
     grep -q '^/swapfile ' /etc/fstab || echo '/swapfile none swap sw 0 0' | $SUDO tee -a /etc/fstab >/dev/null
