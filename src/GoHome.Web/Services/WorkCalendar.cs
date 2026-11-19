@@ -16,6 +16,17 @@ public class WorkCalendar(IOptions<PilotOptions> options, IClock clock)
 
     public bool CanChange(DateOnly date) => clock.LocalNow < DeadlineFor(date);
 
+    /// <summary>За сколько минут до посадки закрывается запись «на сегодня».</summary>
+    public const int SameDayCutoffMinutes = 10;
+
+    /// <summary>Запись (и отмена разовой записи) в день поездки: сегодня и не позже чем за 10 минут до посадки.</summary>
+    public bool CanBookSameDay(DateOnly date, TimeOnly boardTime) =>
+        date == clock.Today && clock.LocalNow < date.ToDateTime(boardTime).AddMinutes(-SameDayCutoffMinutes);
+
+    /// <summary>Когда пассажир садится: утром — у своей остановки, вечером — у офиса при выезде.</summary>
+    public static TimeOnly BoardTime(Route route, Stop stop, Direction dir) =>
+        dir == Direction.Morning ? stop.MorningTime : route.Stops.Min(s => s.EveningTime);
+
     /// <summary>Ближайшие рабочие дни, на которые ещё можно что-то менять.</summary>
     public List<DateOnly> UpcomingChangeableDays(int? count = null)
     {

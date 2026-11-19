@@ -221,11 +221,84 @@ public class BookingService(AppDbContext db, TripService trips, WorkCalendar cal
         }
     }
 
+    /// <summary>Рейс маршрута на сегодня глазами пассажира: когда он садится, едет ли уже, открыта ли запись.</summary>
+    public record TodayTrip(Direction Dir, TripRoster Roster, TimeOnly BoardTime, bool Mine, bool Open);
+
+    public async Task<List<TodayTrip>> TodayTripsAsync(int userId, int routeId, int stopId)
+    {
+        var today = clock.Today;
+        var list = new List<TodayTrip>();
+        if (!calendar.IsWorkday(today)) return list;
+        foreach (var dir in Enum.GetValues<Direction>())
+        {
+            var roster = await trips.GetRosterAsync(routeId, today, dir);
+            var stop = roster.Route.Stops.FirstOrDefault(s => s.Id == stopId) ?? roster.Route.Stops.MinBy(s => s.Order);
+            if (stop is null) continue;
+            var board = WorkCalendar.BoardTime(roster.Route, stop, dir);
+            var mine = await RidesAnywhereAsync(userId, today, dir);
+            list.Add(new TodayTrip(dir, roster, board, mine, roster.Runs && !mine && calendar.CanBookSameDay(today, board)));
+        }
+        return list;
+    }
+
+    /// <summary>
+    /// Запись «на сегодня»: на все ещё открытые сегодняшние рейсы маршрута — утром это утро и вечер, днём только вечер.
+    /// Одно место на оба рейса. Возвращает направления, на которые записали (для уведомления водителя).
+    /// </summary>
+    public async Task<(OpResult Result, List<Direction> Booked)> BookTodayAsync(int userId, int routeId, int stopId, int? seat, string actor)
+    {
+        await SeatLock.WaitAsync();
+        try
+        {
+            if (!await db.Stops.AnyAsync(s => s.Id == stopId && s.RouteId == routeId))
+                return (OpResult.Fail("Остановка не относится к маршруту."), []);
+            var all = await TodayTripsAsync(userId, routeId, stopId);
+            var open = all.Where(t => t.Open).ToList();
+            if (open.Count == 0)
+                return (OpResult.Fail(all.Count == 0 ? "Сегодня рейсов нет."
+                    : all.Any(t => t.Mine) ? "Вы уже записаны на сегодня."
+                    : "На сегодня запись закрыта — приходите завтра."), []);
+
+            var free = open.Select(t => t.Roster.FreeSeatNumbers.ToHashSet())
+                .Aggregate((a, b) => { a.IntersectWith(b); return a; });
+            if (seat is { } wanted)
+            {
+                if (!open[0].Roster.Layout.HasSeat(wanted)) return (OpResult.Fail("Такого места нет в машине."), []);
+                if (!free.Contains(wanted)) return (OpResult.Fail("Это место уже занято — выберите другое."), []);
+            }
+            else if (free.Count == 0)
+            {
+                return (OpResult.Fail("Свободных мест нет."), []);
+            }
+            var chosen = seat ?? free.Min();
+
+            var bookings = open.Select(t => new OneOffBooking
+            {
+                UserId = userId, RouteId = routeId, StopId = stopId, Date = t.Roster.Date, Direction = t.Dir,
+                SeatNumber = chosen, Status = BookingStatus.Booked, CreatedAt = clock.UtcNow,
+            }).ToList();
+            db.OneOffBookings.AddRange(bookings);
+            await db.SaveChangesAsync();
+            foreach (var b in bookings)
+                await audit.LogAsync("OneOffBooking", b.Id, "BookToday", $"{b.Date} {b.Direction} seat={chosen}", actor);
+
+            var what = open.Count > 1 ? "утро и вечер" : WorkCalendar.Format(open[0].Dir);
+            return (OpResult.Success($"Вы записаны на сегодня ({what}), место № {chosen}. Напомним за 30 и за 10 минут до выезда."),
+                open.Select(t => t.Dir).ToList());
+        }
+        finally
+        {
+            SeatLock.Release();
+        }
+    }
+
     public async Task<OpResult> CancelOneOffAsync(int bookingId, int userId, string actor)
     {
-        var b = await db.OneOffBookings.SingleOrDefaultAsync(x => x.Id == bookingId && x.UserId == userId);
+        var b = await db.OneOffBookings.Include(x => x.Stop).ThenInclude(s => s.Route).ThenInclude(r => r.Stops)
+            .SingleOrDefaultAsync(x => x.Id == bookingId && x.UserId == userId);
         if (b is null || b.Status != BookingStatus.Booked) return OpResult.Fail("Бронь не найдена.");
-        if (!calendar.CanChange(b.Date)) return OpResult.Fail("Отменить уже нельзя — срок прошёл.");
+        var sameDay = calendar.CanBookSameDay(b.Date, WorkCalendar.BoardTime(b.Stop.Route, b.Stop, b.Direction));
+        if (!calendar.CanChange(b.Date) && !sameDay) return OpResult.Fail("Отменить уже нельзя — срок прошёл.");
         b.Status = BookingStatus.Cancelled;
         await db.SaveChangesAsync();
         await audit.LogAsync("OneOffBooking", b.Id, "Cancel", null, actor);

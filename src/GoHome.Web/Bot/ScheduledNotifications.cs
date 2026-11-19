@@ -45,6 +45,10 @@ public class ScheduledNotifications(IServiceScopeFactory scopes, IClock clock, I
 
         if (today.DayOfWeek == DayOfWeek.Friday && InWindow(time, new TimeOnly(19, 30)) && Once("weekly-bill", today))
             await SendWeeklyBillsAsync();
+
+        // Напоминания пассажирам за 30 и 10 минут до выезда — проверка каждую минуту.
+        using var scope = scopes.CreateScope();
+        await scope.ServiceProvider.GetRequiredService<DepartureReminders>().SendDueAsync();
     }
 
     private static bool InWindow(TimeOnly now, TimeOnly at) => now >= at && now < at.AddMinutes(30);

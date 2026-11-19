@@ -53,6 +53,8 @@ public sealed class Harness : IDisposable
         sc.AddScoped<BillingService>();
         sc.AddScoped<MetricsService>();
         sc.AddScoped<CarService>();
+        sc.AddScoped<DriverAlerts>();
+        sc.AddScoped<DepartureReminders>();
         sc.AddSingleton(Routing);
         sc.AddSingleton<IRoutingProvider>(Routing);
         sc.AddScoped<RouteMapService>();

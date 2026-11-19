@@ -308,7 +308,7 @@ function bindNav(root) {
   root?.querySelectorAll('[data-nav]').forEach(b => b.onclick = e => { e.preventDefault(); openLink(navUrl(b.dataset.nav, b.dataset.lat, b.dataset.lng)); });
 }
 function stopNavHtml(st) {
-  return `<div class="title">${esc(st.name)}</div>${st.note ? `<div class="hint">${esc(st.note)}</div>` : ''}
+  return `<div class="eyebrow">Точка сбора</div><div class="title">${esc(st.name)}</div>${st.note ? `<div class="hint">${esc(st.note)}</div>` : ''}
     <div class="g2" style="margin-top:10px">
       <button class="sm" data-nav="google" data-lat="${st.lat}" data-lng="${st.lng}">${IC.nav} Как дойти</button>
       <button class="sm" data-nav="2gis" data-lat="${st.lat}" data-lng="${st.lng}">Открыть в 2ГИС</button>
@@ -393,7 +393,7 @@ async function boot() {
     syncClock(S.me);
   } catch (e) {
     if (e.code === 'need_contact') return renderNeedContact();
-    $view.innerHTML = `<div class="center" style="padding:40px 16px"><h1>RideWay</h1><p>${esc(e.message)}</p></div>`;
+    $view.innerHTML = `<div class="center" style="padding:40px 16px"><p>${esc(e.message)}</p></div>`;
     return;
   }
   renderTabs();
@@ -405,7 +405,7 @@ async function boot() {
 function renderNeedContact() {
   $view.innerHTML = `
     <div class="center" style="padding:40px 8px">
-      <h1>Добро пожаловать в RideWay</h1>
+      <h1>Добро пожаловать</h1>
       <p class="hint">Поделитесь номером телефона — по нему водитель и приложение вас узнают.</p>
       <div class="spacer"></div>
       <button class="primary block" id="share">${IC.phone} Поделиться номером</button>
@@ -424,7 +424,8 @@ function renderNeedContact() {
 }
 
 function renderTabs() {
-  const tabs = [['today', IC.car, 'Сегодня'], ['week', IC.week, 'Неделя'], ['routes', IC.route, 'Маршруты'], ['pay', IC.pay, 'Оплата']];
+  // «Неделя» и «Оплата» на время пилота скрыты (код экранов оставлен): запись — только на сегодня.
+  const tabs = [['today', IC.car, 'Сегодня'], ['routes', IC.route, 'Маршруты']];
   if (S.me.isDriver) tabs.push(['driver', IC.wheel, 'Водитель']);
   const el = document.getElementById('tabs');
   el.hidden = false;
@@ -473,7 +474,8 @@ async function renderToday() {
   const next = live[0], after = live[1];
   const dayName = t => t.isToday ? 'Сегодня' : cap(t.label.split(',')[0]);
 
-  let html = `<div class="eyebrow">${m ? esc(m.route) : 'RideWay'}</div><h1>${next ? `${dayName(next)}${next.isToday ? '' : ' — ближайшая поездка'}` : 'Поездки'}</h1>`;
+  const routeName = next?.route || m?.route;
+  let html = `${routeName ? `<div class="eyebrow">${esc(routeName)}</div>` : ''}<h1>${next ? `${dayName(next)}${next.isToday ? '' : ' — ближайшая поездка'}` : 'Поездки'}</h1>`;
 
   if (next) {
     const morning = next.dir === 'Morning';
@@ -491,13 +493,14 @@ async function renderToday() {
       <div class="flex between"><span class="eyebrow">${morning ? 'Утро · в офис' : 'Вечер · домой'}${next.isRegular ? '' : ' · разово'}</span>${badge ? `<span class="chip warn">${badge}</span>` : ''}</div>
       <div class="flex end" style="gap:14px"><div class="clock">${hm(anchor(next))}</div><div class="sub">${sub}</div></div>
       <div class="g2">
-        <div class="cell" style="grid-column:1/-1"><small>${morning ? 'Остановка' : 'Выходите'}</small><b>${esc(next.stop)}</b></div>
+        <div class="cell" style="grid-column:1/-1"><small>${morning ? 'Точка сбора' : 'Выходите'}</small><b>${esc(next.stop)}</b></div>
         <div class="cell"><small>Место</small><b>№ ${next.seat ?? '—'}</b></div>
         <div class="cell"><small>Поездка</small><b>${money(next.price)}</b></div>
       </div>
       ${next.isToday && !boarded ? `<button class="white block" id="scan">${IC.scan} Я в машине — отметиться</button>` : ''}
-      ${more.length ? `<div class="${more.length > 1 ? 'g2' : 'g1'}">${more.slice(0, 2).join('')}</div>` : ''}
-      ${next.canChange ? `<div class="note">Отменить бесплатно можно до 21:00 накануне.</div>` : next.stopNote && morning ? `<div class="note">${esc(next.stopNote)}</div>` : ''}
+      ${more.length ? `<div class="${more.length > 1 ? 'g2' : 'g1'}">${more.join('')}</div>` : ''}
+      ${next.stopNote && morning ? `<div class="note">${esc(next.stopNote)}</div>` : ''}
+      ${next.canChange ? `<div class="note">${next.isToday && !next.isRegular ? 'Отменить можно не позже чем за 10 минут до посадки.' : 'Отменить бесплатно можно до 21:00 накануне.'}</div>` : ''}
     </div>`;
     if (next.driver) html += `<div class="card flex" style="gap:12px">
       <div class="avatar">${esc(next.driver[0])}</div>
@@ -510,9 +513,9 @@ async function renderToday() {
       ${after.canChange && after.isRegular ? `<button class="sm" id="skip2">Не еду</button>` : `<span class="chip ok">Еду</span>`}
     </div>`;
   } else if (!m) {
-    html += `<div class="card"><div class="title">Вы пока не записаны на маршрут</div>
-      <div class="hint">Выберите маршрут, остановку и место в машине — оно закрепится за вами. Платите только за состоявшиеся поездки.</div>
-      <div class="spacer"></div><button class="primary block" data-go="routes">Посмотреть маршруты</button></div>`;
+    html += `<div class="card"><div class="title">Поехать сегодня</div>
+      <div class="hint">Выберите маршрут, точку сбора и место в машине. Утром записываем на утро и вечер, днём — на вечер. Платите только за состоявшиеся поездки.</div>
+      <div class="spacer"></div><button class="primary block" data-go="routes">Выбрать маршрут</button></div>`;
   } else if (m.status === 'Waitlist') {
     html += `<div class="card"><div class="flex between"><div class="title">${esc(m.route)}</div><span class="chip warn">в очереди</span></div>
       <div class="hint">Мест пока нет. Сообщим, как только место освободится или появится вторая машина.</div>
@@ -520,10 +523,10 @@ async function renderToday() {
       <div class="hint" style="margin-top:8px">Ответы помогают решить, когда и откуда запускать следующую машину.</div></div>`;
   } else {
     html += `<div class="card"><div class="title">Ближайших поездок нет</div>
-      <div class="hint">Все ближайшие дни отмечены «не еду» или рейсы отменены.</div>
-      <div class="spacer"></div><button class="primary block" data-go="week">Открыть неделю</button></div>`;
+      <div class="hint">Все ближайшие поездки отменены или отмечены «не еду».</div>
+      <div class="spacer"></div><button class="primary block" data-go="routes">Записаться на сегодня</button></div>`;
   }
-  if (me.due > 0) html += `<a class="card flex between" href="#" data-go="pay" style="color:var(--text)"><span class="hint" style="font-weight:600">К оплате</span><b style="font-size:16px">${money(me.due)} ›</b></a>`;
+  if (me.due > 0) html += `<div class="card flex between"><span class="hint" style="font-weight:600">К оплате</span><b style="font-size:16px">${money(me.due)}</b></div>`;
 
   $view.innerHTML = html;
   bindNav($view);
@@ -614,6 +617,8 @@ async function renderRoute(id) {
   const queued = m && m.routeId === id && m.status === 'Waitlist';
   if (mine) S.dirs = mine.morning && mine.evening ? 'both' : mine.morning ? 'morning' : 'evening';
   if (!S.stopId || !r.stops.some(s => s.id === S.stopId)) S.stopId = mine ? mine.stopId : r.stops[0]?.id;
+  // Новые пассажиры записываются только на сегодня; экран постоянной записи — для тех, кто уже ездит постоянно.
+  if (!mine) return renderRouteToday(r);
 
   const sm = await api(`/routes/${id}/seats?morning=${S.dirs !== 'evening'}&evening=${S.dirs !== 'morning'}`);
   if (!pickableSeat(sm.layout, S.seat)) S.seat = sm.mySeat ?? seatCells(sm.layout).find(c => c.state === 'free')?.number ?? null;
@@ -675,11 +680,20 @@ async function renderRoute(id) {
     </div>
     <div class="hint" style="padding:0 4px 12px">${mine ? 'Чтобы сменить направления, отпишитесь и запишитесь заново.' : `Каждый рабочий день. Отдельные дни отменяются на вкладке «Неделя».`}</div>
     ${queued ? `<div class="card"><span class="chip warn">вы в очереди</span><div class="hint" style="margin-top:6px">Сообщим, когда освободится место.</div></div>` : ''}
-    <button class="primary block" id="next" ${queued ? 'disabled' : ''}>${hasFree ? 'Дальше — выбрать место' : queued ? 'Вы уже в очереди' : 'Мест нет — встать в очередь'}</button>
-    <h2>Разовая поездка</h2>
-    <div class="list" id="oneoff"><div class="row hint">Загрузка…</div></div>`;
+    <button class="primary block" id="next" ${queued ? 'disabled' : ''}>${hasFree ? 'Дальше — выбрать место' : queued ? 'Вы уже в очереди' : 'Мест нет — встать в очередь'}</button>`;
 
-  // Остановку можно выбрать списком или нажатием на метку на карте; экран при этом не перерисовывается целиком.
+  mountStopPicker(r);
+  $view.querySelectorAll('#dirs button').forEach(b => { b.classList.toggle('active', b.dataset.d === S.dirs); b.onclick = () => { tap(); S.dirs = b.dataset.d; renderRoute(id); }; });
+  document.getElementById('next').onclick = () => { if (hasFree) { S.step = 2; window.scrollTo(0, 0); renderRoute(id); } else join(null); };
+}
+
+/**
+ * Карта, список остановок и карточка «Точка сбора» с кнопками «Как дойти». Нужны элементы #stops, #stopInfo и (если есть координаты) #routeMap.
+ * Остановку выбирают списком или нажатием на метку; экран при этом не перерисовывается целиком. onChange(stopId) — после выбора.
+ */
+function mountStopPicker(r, onChange) {
+  const hasMap = r.stops.some(s => s.lat != null && s.lng != null);
+  const stop = () => r.stops.find(s => s.id === S.stopId);
   let mapCtl = null;
   const drawStops = () => {
     const last = Math.max(...r.stops.map(s => s.order));
@@ -695,24 +709,87 @@ async function renderRoute(id) {
     info.hidden = !(st && st.lat != null && st.lng != null);
     if (!info.hidden) { info.innerHTML = stopNavHtml(st); bindNav(info); }
   };
-  const pickStop = sid => { S.stopId = sid; mapCtl?.select(sid); drawStops(); };
+  const pickStop = sid => { S.stopId = sid; mapCtl?.select(sid); drawStops(); onChange?.(sid); };
   drawStops();
   if (hasMap) mapCtl = mountMap(document.getElementById('routeMap'), r.stops, r.path, { selectedId: S.stopId, onSelect: sid => { tap(); pickStop(sid); } });
+}
 
-  $view.querySelectorAll('#dirs button').forEach(b => { b.classList.toggle('active', b.dataset.d === S.dirs); b.onclick = () => { tap(); S.dirs = b.dataset.d; renderRoute(id); }; });
-  document.getElementById('next').onclick = () => { if (hasFree) { S.step = 2; window.scrollTo(0, 0); renderRoute(id); } else join(null); };
+// ───────── Запись на сегодня ─────────
+// Шаг 1: точка сбора и какие сегодняшние рейсы ещё открыты (утром — утро и вечер, днём — вечер). Шаг 2: место.
+async function renderRouteToday(r) {
+  const id = r.id;
+  const last = Math.max(...r.stops.map(s => s.order));
+  if (r.stops.find(s => s.id === S.stopId)?.order === last) S.stopId = r.stops.find(s => s.order !== last)?.id;
+  const dirName = d => d === 'Morning' ? 'Утро · в офис' : 'Вечер · домой';
+  const when = t => t.dir === 'Morning' ? `посадка ${hm(t.board)}` : `выезд ${hm(t.board)}`;
 
-  const trips = await api(`/routes/${id}/trips`);
-  const box = document.getElementById('oneoff');
-  if (!box) return;
-  box.innerHTML = trips.length ? trips.map((t, i) => `<div class="row">
-      <div class="grow"><div class="title">${cap(esc(t.label))}</div><div class="hint">отправление ${hm(t.departure)} · свободно ${t.free}</div></div>
-      <button class="sm primary" data-book="${i}">Выбрать место</button></div>`).join('')
-    : `<div class="row hint">На ближайшие дни свободных мест нет.</div>`;
-  box.querySelectorAll('[data-book]').forEach(b => b.onclick = () => {
-    const t = trips[b.dataset.book];
-    S.oneOff = { date: t.date, dir: t.dir }; S.seat1 = null; window.scrollTo(0, 0); renderRoute(id);
-  });
+  if (S.step === 2 && S.today) {
+    const td = S.today, open = td.trips.filter(t => t.open);
+    setBack(() => { S.step = 1; renderRouteToday(r); });
+    if (!pickableSeat(td.layout, S.seat)) S.seat = seatCells(td.layout).find(c => c.state === 'free')?.number ?? null;
+    const st = r.stops.find(s => s.id === S.stopId);
+    $view.innerHTML = `
+      <div class="steps g2"><i class="on"></i><i class="on"></i></div>
+      <div class="eyebrow">Шаг 2 из 2 · ${esc(r.car)}</div><h1>Выберите место</h1>
+      <div class="card">
+        ${td.photo ? `<img class="photo" src="${esc(td.photo)}" alt="Салон" />` : ''}
+        <div id="map"></div>
+      </div>
+      <div class="list">
+        <div class="row"><span class="hint grow">Точка сбора</span><b>${esc(st.name)}</b></div>
+        ${open.map(t => `<div class="row"><span class="hint grow">${dirName(t.dir)}</span><b>сегодня, ${when(t)}</b></div>`).join('')}
+        <div class="row"><span class="hint grow">Цена</span><b>${money(r.price)} за поездку</b></div>
+      </div>
+      <div class="hint flex" style="align-items:flex-start;padding:0 4px 12px">${IC.check}<span>Напомним за 30 и за 10 минут до выезда машины</span></div>
+      <button class="primary block" id="book"></button>`;
+    const btn = document.getElementById('book');
+    const refresh = () => {
+      drawSeatMap(document.getElementById('map'), td.layout, S.seat, n => { S.seat = n; refresh(); });
+      btn.disabled = S.seat == null;
+      btn.textContent = S.seat == null ? 'Свободных мест нет' : `Записаться на сегодня · место № ${S.seat}`;
+    };
+    refresh();
+    btn.onclick = () => act('/today/book', { routeId: id, stopId: S.stopId, seat: S.seat }, async res => {
+      if (res.ok) { S.me = await api('/me'); S.step = 1; S.today = null; S.route = null; show('today'); }
+      else { S.step = 1; renderRouteToday(r); }
+    });
+    return;
+  }
+
+  S.step = 1;
+  setBack(backToRoutes);
+  const hasMap = r.stops.some(s => s.lat != null && s.lng != null);
+  $view.innerHTML = `
+    <div class="steps g2"><i class="on"></i><i></i></div>
+    <div class="eyebrow">${esc(r.name)} · ${money(r.price)} за поездку</div><h1>Где вас забирать?</h1>
+    ${hasMap ? `<div class="map" id="routeMap"></div>` : ''}
+    <div class="list" id="stops"></div>
+    <div class="card" id="stopInfo" hidden></div>
+    <div class="card" id="todayBox"><div class="hint">Загрузка…</div></div>`;
+
+  const loadToday = async () => {
+    const box = document.getElementById('todayBox');
+    const td = S.today = await api(`/routes/${id}/today?stopId=${S.stopId}`);
+    if (!document.body.contains(box)) return;
+    const open = td.trips.filter(t => t.open);
+    if (!td.trips.length) {
+      box.innerHTML = `<div class="title">Сегодня рейсов нет</div><div class="hint">Запись откроется в рабочий день.</div>`;
+    } else if (!open.length) {
+      const mine = td.trips.some(t => t.mine);
+      box.innerHTML = mine
+        ? `<div class="title">Вы уже записаны на сегодня</div><div class="spacer"></div><button class="primary block" data-go="today">Моя поездка</button>`
+        : `<div class="title">На сегодня запись закрыта</div><div class="hint">Записаться можно не позже чем за 10 минут до посадки. Приходите завтра утром.</div>`;
+    } else {
+      box.innerHTML = `<div class="title">Поехать сегодня</div>
+        <div class="list" style="margin:8px 0">${open.map(t => `<div class="row"><span class="grow">${dirName(t.dir)}</span><b>${when(t)}</b></div>`).join('')}</div>
+        ${td.trips.some(t => t.mine) ? `<div class="hint" style="margin-bottom:8px">На ${td.trips.find(t => t.mine).dir === 'Morning' ? 'утро' : 'вечер'} вы уже записаны.</div>` : ''}
+        <button class="primary block" id="next" ${td.free ? '' : 'disabled'}>${td.free ? 'Дальше — выбрать место' : 'Мест нет'}</button>`;
+      document.getElementById('next')?.addEventListener('click', () => { tap(); S.step = 2; window.scrollTo(0, 0); renderRouteToday(r); });
+    }
+    box.querySelectorAll('[data-go]').forEach(b => b.onclick = () => { S.route = null; show(b.dataset.go); });
+  };
+  mountStopPicker(r, () => loadToday().catch(e => toast(e.message, false)));
+  await loadToday();
 }
 
 async function renderOneOff(id) {

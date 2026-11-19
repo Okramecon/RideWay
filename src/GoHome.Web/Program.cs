@@ -35,6 +35,8 @@ services.AddScoped<TripOpsService>();
 services.AddScoped<BillingService>();
 services.AddScoped<MetricsService>();
 services.AddScoped<CarService>();
+services.AddScoped<DriverAlerts>();
+services.AddScoped<DepartureReminders>();
 services.Configure<RoutingOptions>(config.GetSection(RoutingOptions.Section));
 services.AddHttpClient<IRoutingProvider, OsrmRoutingProvider>(c =>
 {

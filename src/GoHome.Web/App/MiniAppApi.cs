@@ -19,6 +19,7 @@ public static class MiniAppApi
     public record SeatChangeRequest(int? Seat, int? StopId);
     public record TripRef(DateOnly Date, Direction Dir);
     public record OneOffRequest(int RouteId, int StopId, DateOnly Date, Direction Dir, int? Seat);
+    public record TodayRequest(int RouteId, int StopId, int? Seat);
     public record CarRef(int RouteId);
     public record LayoutRequest(int RouteId, string Layout);
     public record BoardRequest(string Code);
@@ -126,6 +127,37 @@ public static class MiniAppApi
             });
         });
 
+        // Запись «на сегодня»: какие сегодняшние рейсы ещё открыты для этой остановки и общая схема мест на них
+        // (место занято, если занято хотя бы на одном из открытых рейсов — пассажир едет на одном месте весь день).
+        api.MapGet("/routes/{id:int}/today", async (HttpContext ctx, int id, int? stopId, AppDbContext db, BookingService booking) =>
+        {
+            var route = await db.Routes.Include(r => r.Car).FirstOrDefaultAsync(r => r.Id == id && r.IsActive);
+            if (route is null) return Results.NotFound();
+            var list = await booking.TodayTripsAsync(Current(ctx).Id, id, stopId ?? 0);
+            var open = list.Where(t => t.Open).ToList();
+            var taken = open.SelectMany(t => t.Roster.TakenSeats).ToHashSet();
+            var layout = route.Car.ParsedLayout();
+            return Results.Ok(new
+            {
+                photo = CarService.PhotoUrl(route.Car),
+                trips = list.Select(t => new
+                {
+                    dir = t.Dir, board = t.BoardTime, departure = t.Roster.DepartureTime, mine = t.Mine, open = t.Open,
+                    cancelled = t.Roster.IsCancelled, free = t.Roster.FreeSeatNumbers.Count,
+                }),
+                free = open.Count == 0 ? 0 : layout.SeatNumbers.Count(n => !taken.Contains(n)),
+                layout = Grid(layout, n => (taken.Contains(n) ? "taken" : "free", null)),
+            });
+        });
+
+        api.MapPost("/today/book", async (HttpContext ctx, TodayRequest r, BookingService booking, DriverAlerts alerts, IClock clock) =>
+        {
+            var u = Current(ctx);
+            var (res, booked) = await booking.BookTodayAsync(u.Id, r.RouteId, r.StopId, r.Seat, Actor(ctx));
+            if (res.Ok) await alerts.NewPassengerAsync(r.RouteId, u.Id, r.StopId, clock.Today, booked, r.Seat);
+            return Result(res);
+        });
+
         api.MapPost("/membership", async (HttpContext ctx, JoinRequest r, BookingService booking) =>
             Result(await booking.JoinRouteAsync(Current(ctx).Id, r.RouteId, r.StopId, r.Morning, r.Evening, Actor(ctx), r.Seat)));
 
@@ -152,7 +184,9 @@ public static class MiniAppApi
                     time, departure = t.DepartureTime, price = t.Route.PricePerRide,
                     stop = e.Stop.Name, stopNote = e.Stop.Note, stopLat = e.Stop.Lat, stopLng = e.Stop.Lng,
                     seat = e.SeatNumber, e.IsRegular, e.IsAbsent, t.IsCancelled, e.Result, bookingId = e.OneOffBookingId,
-                    canChange = !t.IsCancelled && calendar.CanChange(t.Date),
+                    // Разовую запись на сегодня можно отменить до 10 минут до посадки; «не еду» постоянного — только накануне до 21:00.
+                    canChange = !t.IsCancelled && (calendar.CanChange(t.Date)
+                        || (!e.IsRegular && calendar.CanBookSameDay(t.Date, WorkCalendar.BoardTime(t.Route, e.Stop, t.Direction)))),
                     departed = isToday && await ops.IsDepartedAsync(t.Route.Id, t.Date, t.Direction),
                     arrived = t.ArrivedAt is not null,
                     driver = t.Route.Car.Driver?.Name, driverPhone = t.Route.Car.Driver?.Phone, car = $"{t.Route.Car.Model} {t.Route.Car.Plate}",
@@ -223,8 +257,12 @@ public static class MiniAppApi
         api.MapPost("/absence/remove", async (HttpContext ctx, TripRef r, BookingService booking) =>
             Result(await booking.UnmarkAbsentAsync(Current(ctx).Id, r.Date, r.Dir, Actor(ctx))));
 
-        api.MapPost("/oneoff", async (HttpContext ctx, OneOffRequest r, BookingService booking) =>
-            Result(await booking.BookOneOffAsync(Current(ctx).Id, r.RouteId, r.StopId, r.Date, r.Dir, Actor(ctx), r.Seat)));
+        api.MapPost("/oneoff", async (HttpContext ctx, OneOffRequest r, BookingService booking, DriverAlerts alerts) =>
+        {
+            var res = await booking.BookOneOffAsync(Current(ctx).Id, r.RouteId, r.StopId, r.Date, r.Dir, Actor(ctx), r.Seat);
+            if (res.Ok) await alerts.NewPassengerAsync(r.RouteId, Current(ctx).Id, r.StopId, r.Date, [r.Dir], r.Seat);
+            return Result(res);
+        });
 
         api.MapGet("/balance", async (HttpContext ctx, BillingService billing, IClock clock) =>
         {
