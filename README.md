@@ -109,6 +109,8 @@ docker compose up -d --build
 Туннель Cloudflare: `docker compose --profile tunnel up -d` (быстрый) или `--profile tunnel-named` (свой домен, `TUNNEL_TOKEN`).
 
 Бесплатный сервер Google Cloud (e2-micro) одной командой — [deploy/gcp/README.md](deploy/gcp/README.md).
+Автообновление: push в ветку `release-test` → GitHub Actions (`.github/workflows/deploy.yml`) прогоняет тесты, собирает образ
+и обновляет сервер (настройка — там же, раздел «Автообновление из GitHub»).
 
 ## Первый запуск пилота
 

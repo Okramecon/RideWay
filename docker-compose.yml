@@ -26,8 +26,8 @@ services:
     restart: unless-stopped
     # --protocol http2: QUIC (UDP 7844) режется во многих сетях, тогда туннель не соединяется и отдаёт 530.
     command: tunnel --no-autoupdate --protocol http2 --url http://gohome:8080
-    depends_on:
-      - gohome
+    # Без depends_on: иначе при обновлении приложения compose перезапускает и туннель, а у быстрого туннеля
+    # после перезапуска новый адрес. Пока приложение стартует, туннель просто отвечает 502.
     profiles: ["tunnel"]
 
   # Постоянный туннель на своём домене: создайте туннель в Cloudflare Zero Trust (Networks → Tunnels),
@@ -39,8 +39,6 @@ services:
     command: tunnel --no-autoupdate --protocol http2 run
     environment:
       TUNNEL_TOKEN: ${TUNNEL_TOKEN:-}
-    depends_on:
-      - gohome
     profiles: ["tunnel-named"]
 
 volumes:

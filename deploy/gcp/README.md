@@ -1,7 +1,7 @@
 # RideWay на Google Cloud (бесплатный e2-micro)
 
-Сервер не открывает наружу ни одного порта: приложение доступно через туннель Cloudflare, бот сам ходит в Telegram.
-Внешний IP, домен и сертификат не нужны.
+Приложение не открывает наружу ни одного порта: оно доступно через туннель Cloudflare, бот сам ходит в Telegram.
+Домен и сертификат не нужны. Наружу открыт только SSH (порт 22) — для консоли Google Cloud и автообновления из GitHub.
 
 ## 1. Создать сервер (один раз)
 
@@ -61,6 +61,36 @@ mkdir -p ~/rideway && tar -xzf ~/rideway-deploy.tar.gz -C ~/rideway && bash ~/ri
 
 На компьютере снова `pack.ps1`, загрузите новый `rideway-deploy.tar.gz` и выполните ту же команду из шага 3.
 База, пароль и токен сохраняются; адрес туннеля не меняется (перезапускается только приложение).
+
+## Автообновление из GitHub (push в `release-test`)
+
+`.github/workflows/deploy.yml`: на каждый push и pull request идут тесты; при push в ветку `release-test` GitHub Actions
+собирает образ (`pack.sh`), передаёт пакет на сервер по SSH и запускает там `install.sh`.
+База, `.env` и адрес туннеля сохраняются. Ключ CI на сервере умеет только одно — передать пакет (`ci-deploy.sh`):
+ни shell, ни других команд им не выполнить.
+
+Один раз:
+
+1. **Обновить сервер вручную** новым пакетом (в нём скрипты для CI): `pack.ps1` → загрузить → команда из шага 3.
+2. **На сервере:** `bash ~/rideway/ci-setup.sh` — напечатает четыре значения.
+3. **GitHub → репозиторий → Settings → Environments → New environment** `release-test`:
+   - **Deployment branches and tags** → *Selected branches and tags* → добавить `release-test` — секреты получит только эта ветка;
+   - **Environment secrets → Add secret** — `DEPLOY_HOST`, `DEPLOY_USER`, `SSH_KNOWN_HOSTS`, `SSH_PRIVATE_KEY` со значениями из шага 2.
+
+   Закрытый ключ на сервере не остаётся: потеряли — запустите `ci-setup.sh` ещё раз и обновите секреты.
+4. **Google Cloud → VPC network → IP addresses** — у внешнего адреса сервера нажать **Promote to static**.
+   Обычный адрес меняется, если сервер остановить и запустить (не при перезагрузке), — тогда CI перестанет его находить.
+   Статический адрес на работающем сервере стоит столько же, сколько обычный.
+
+Проверка: push в `release-test` → вкладка **Actions** → запуск *Test & deploy*; в шаге «Обновить сервер» в конце
+`✔ Обновлено до версии <коммит>`. Деплой идёт только если тесты прошли.
+
+GitHub Actions бесплатны для публичных репозиториев, для приватных — 2000 минут в месяц (деплой ≈ 5 минут).
+Сервер должен быть доступен по SSH (порт 22) из интернета: в Google Cloud он открыт правилом `default-allow-ssh` сети `default`.
+
+Если деплой упал: `Permission denied (publickey)` — неверный `SSH_PRIVATE_KEY`/`DEPLOY_USER` или ключ стёрт с сервера
+(запустите `ci-setup.sh` заново); `Host key verification failed` — сменился адрес, обновите `DEPLOY_HOST` и `SSH_KNOWN_HOSTS`;
+`Приложение не отвечает` — смотрите `sudo docker compose logs --tail 100 gohome` на сервере.
 
 ## Полезное
 

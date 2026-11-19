@@ -1,0 +1,68 @@
+# Тесты на каждый push и pull request; push в release-test — сборка образа и обновление сервера.
+# Настройка (ключ SSH, секреты окружения release-test) — deploy/gcp/README.md, раздел «Автообновление из GitHub».
+name: Test & deploy
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+      DOTNET_NOLOGO: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - run: dotnet test GoHome.slnx
+
+  deploy:
+    needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/release-test'
+    runs-on: ubuntu-latest
+    # Секреты лежат в окружении release-test, доступном только ветке release-test.
+    environment: release-test
+    # Два деплоя одновременно не идут: следующий ждёт окончания предыдущего.
+    concurrency:
+      group: deploy-release-test
+      cancel-in-progress: false
+    env:
+      DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+      DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+      SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+      SSH_KNOWN_HOSTS: ${{ secrets.SSH_KNOWN_HOSTS }}
+    steps:
+      - name: Проверить секреты
+        run: |
+          for v in DEPLOY_HOST DEPLOY_USER SSH_PRIVATE_KEY SSH_KNOWN_HOSTS; do
+            if [ -z "${!v}" ]; then
+              echo "::error::Не задан секрет $v: Settings → Environments → release-test → Environment secrets (см. deploy/gcp/README.md)."
+              exit 1
+            fi
+          done
+
+      - uses: actions/checkout@v4
+
+      - name: Собрать пакет
+        run: |
+          export CI_COMMIT_SHA="$GITHUB_SHA" CI_COMMIT_SHORT_SHA="${GITHUB_SHA::7}"
+          sh deploy/gcp/pack.sh
+
+      - name: Обновить сервер
+        run: |
+          install -m 700 -d ~/.ssh
+          echo "$SSH_PRIVATE_KEY" | base64 -d > ~/.ssh/rideway_ci && chmod 600 ~/.ssh/rideway_ci
+          echo "$SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          # Ключ на сервере ограничен одной командой (ci-deploy.sh): пакет передаётся через stdin, ничего другого с ним сделать нельзя.
+          ssh -i ~/.ssh/rideway_ci -o BatchMode=yes -o ServerAliveInterval=30 "$DEPLOY_USER@$DEPLOY_HOST" deploy \
+            < deploy/gcp/out/rideway-deploy.tar.gz
+
+      - name: Удалить ключ
+        if: always()
+        run: rm -f ~/.ssh/rideway_ci

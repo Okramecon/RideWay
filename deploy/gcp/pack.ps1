@@ -26,6 +26,7 @@ foreach ($f in $files) {
     $text = [IO.File]::ReadAllText($f) -replace "`r`n", "`n"
     [IO.File]::WriteAllText((Join-Path $stage (Split-Path $f -Leaf)), $text, $utf8)
 }
+[IO.File]::WriteAllText((Join-Path $stage 'VERSION'), "local-$(Get-Date -Format 'yyyyMMdd-HHmm')`n", $utf8)
 
 Write-Host '▶ Упаковываю' -ForegroundColor Green
 if (Test-Path $bundle) { Remove-Item $bundle -Force }
