@@ -61,6 +61,20 @@ else
         <div class="border rounded bg-white p-3">
             <h2 class="h5">Остановки</h2>
             <p class="text-muted small mb-2">Порядок — как едем утром. Последняя остановка — офис: её утреннее время — плановое прибытие (для метрики опозданий), вечернее — отправление из офиса.</p>
+            @{
+                var ordered = r.Stops.OrderBy(s => s.Order).ToList();
+                var morningUnordered = ordered.Zip(ordered.Skip(1)).Any(p => p.Second.MorningTime < p.First.MorningTime);
+                var eveningFromOffice = ordered.Count > 1 && ordered[^1].EveningTime > ordered.Take(ordered.Count - 1).Min(s => s.EveningTime);
+            }
+            @if (morningUnordered || eveningFromOffice)
+            {
+                <div class="alert alert-warning small py-2">
+                    <b>Проверьте порядок остановок.</b>
+                    @if (morningUnordered) { <span>Утреннее время должно расти от №1 к последней (сейчас утром машина «едет назад во времени»).</span> }
+                    @if (eveningFromOffice) { <span>Вечером машина выезжает из офиса (последняя остановка) — его вечернее время должно быть самым ранним.</span> }
+                    Пассажиры видят маршрут по этому порядку: №1 — первая точка сбора утром, последняя — офис.
+                </div>
+            }
             <div class="table-responsive">
             <table class="table table-sm align-middle">
                 <thead><tr><th style="width:5rem">№</th><th>Название</th><th>Ориентир</th><th style="width:8rem">Утро</th><th style="width:8rem">Вечер</th><th style="width:5rem">На карте</th><th></th></tr></thead>

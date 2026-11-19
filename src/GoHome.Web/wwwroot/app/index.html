@@ -307,8 +307,8 @@ function openLink(url) { inTelegram && tg.openLink ? tg.openLink(url) : window.o
 function bindNav(root) {
   root?.querySelectorAll('[data-nav]').forEach(b => b.onclick = e => { e.preventDefault(); openLink(navUrl(b.dataset.nav, b.dataset.lat, b.dataset.lng)); });
 }
-function stopNavHtml(st) {
-  return `<div class="eyebrow">Точка сбора</div><div class="title">${esc(st.name)}</div>${st.note ? `<div class="hint">${esc(st.note)}</div>` : ''}
+function stopNavHtml(st, label = 'Точка сбора') {
+  return `<div class="eyebrow">${esc(label)}</div><div class="title">${esc(st.name)}</div>${st.note ? `<div class="hint">${esc(st.note)}</div>` : ''}
     <div class="g2" style="margin-top:10px">
       <button class="sm" data-nav="google" data-lat="${st.lat}" data-lng="${st.lng}">${IC.nav} Как дойти</button>
       <button class="sm" data-nav="2gis" data-lat="${st.lat}" data-lng="${st.lng}">Открыть в 2ГИС</button>
@@ -690,24 +690,30 @@ async function renderRoute(id) {
 /**
  * Карта, список остановок и карточка «Точка сбора» с кнопками «Как дойти». Нужны элементы #stops, #stopInfo и (если есть координаты) #routeMap.
  * Остановку выбирают списком или нажатием на метку; экран при этом не перерисовывается целиком. onChange(stopId) — после выбора.
+ * mode: 'morning' — выбираем, где забрать утром; 'evening' — где высадить вечером (офис в списке не показываем);
+ * без mode — общий вид для постоянных пассажиров (утро и вечер, офис — «приезжаем»).
  */
-function mountStopPicker(r, onChange) {
+function mountStopPicker(r, onChange, mode) {
   const hasMap = r.stops.some(s => s.lat != null && s.lng != null);
   const stop = () => r.stops.find(s => s.id === S.stopId);
   let mapCtl = null;
   const drawStops = () => {
     const last = Math.max(...r.stops.map(s => s.order));
-    document.getElementById('stops').innerHTML = r.stops.map(s => s.order === last
+    const times = s => mode === 'morning' ? `<b>${hm(s.morning)}</b><div class="hint">заберём</div>`
+      : mode === 'evening' ? `<b>≈ ${hm(s.evening)}</b><div class="hint">высадим</div>`
+      : `<b>${hm(s.morning)}</b><div class="hint">домой ${hm(s.evening)}</div>`;
+    document.getElementById('stops').innerHTML = r.stops.filter(s => !mode || s.order !== last).map(s => s.order === last
       ? `<div class="row"><span class="grow hint" style="font-weight:600;font-size:15px">${esc(s.name)} — приезжаем</span><b class="hint">≈ ${hm(s.morning)}</b></div>`
       : `<div class="row ${s.id === S.stopId ? 'sel' : ''}" data-stop="${s.id}" style="cursor:pointer">
         <div class="radio ${s.id === S.stopId ? 'on' : ''}"></div>
         <div class="grow"><div class="title">${esc(s.name)}</div>${s.note ? `<div class="hint">${esc(s.note)}</div>` : ''}</div>
-        <div style="text-align:right"><b>${hm(s.morning)}</b><div class="hint">домой ${hm(s.evening)}</div></div></div>`).join('');
+        <div style="text-align:right">${times(s)}</div></div>`).join('');
     document.querySelectorAll('#stops [data-stop]').forEach(el => el.onclick = () => { tap(); pickStop(+el.dataset.stop); });
     const st = stop();
     const info = document.getElementById('stopInfo');
-    info.hidden = !(st && st.lat != null && st.lng != null);
-    if (!info.hidden) { info.innerHTML = stopNavHtml(st); bindNav(info); }
+    // Вечером остановка — место высадки: «Как дойти» до неё не нужно, точка сбора (офис) показана отдельно.
+    info.hidden = mode === 'evening' || !(st && st.lat != null && st.lng != null);
+    if (!info.hidden) { info.innerHTML = stopNavHtml(st, mode === 'evening' ? 'Где высадим' : mode === 'morning' ? 'Точка сбора · утро' : 'Точка сбора'); bindNav(info); }
   };
   const pickStop = sid => { S.stopId = sid; mapCtl?.select(sid); drawStops(); onChange?.(sid); };
   drawStops();
@@ -720,8 +726,7 @@ async function renderRouteToday(r) {
   const id = r.id;
   const last = Math.max(...r.stops.map(s => s.order));
   if (r.stops.find(s => s.id === S.stopId)?.order === last) S.stopId = r.stops.find(s => s.order !== last)?.id;
-  const dirName = d => d === 'Morning' ? 'Утро · в офис' : 'Вечер · домой';
-  const when = t => t.dir === 'Morning' ? `посадка ${hm(t.board)}` : `выезд ${hm(t.board)}`;
+  const office = r.stops.find(s => s.order === last);
 
   if (S.step === 2 && S.today) {
     const td = S.today, open = td.trips.filter(t => t.open);
@@ -736,8 +741,8 @@ async function renderRouteToday(r) {
         <div id="map"></div>
       </div>
       <div class="list">
-        <div class="row"><span class="hint grow">Точка сбора</span><b>${esc(st.name)}</b></div>
-        ${open.map(t => `<div class="row"><span class="hint grow">${dirName(t.dir)}</span><b>сегодня, ${when(t)}</b></div>`).join('')}
+        ${open.map(t => `<div class="row" style="align-items:flex-start"><span class="hint grow">${t.dir === 'Morning' ? '🌅 Утро · в офис' : '🌙 Вечер · домой'}</span>
+          <div style="text-align:right"><b>${esc(t.dir === 'Morning' ? st.name : office?.name ?? '')}</b><div class="hint">точка сбора в ${hm(t.board)}</div></div></div>`).join('')}
         <div class="row"><span class="hint grow">Цена</span><b>${money(r.price)} за поездку</b></div>
       </div>
       <div class="hint flex" style="align-items:flex-start;padding:0 4px 12px">${IC.check}<span>Напомним за 30 и за 10 минут до выезда машины</span></div>
@@ -758,38 +763,66 @@ async function renderRouteToday(r) {
 
   S.step = 1;
   setBack(backToRoutes);
-  const hasMap = r.stops.some(s => s.lat != null && s.lng != null);
-  $view.innerHTML = `
-    <div class="steps g2"><i class="on"></i><i></i></div>
-    <div class="eyebrow">${esc(r.name)} · ${money(r.price)} за поездку</div><h1>Где вас забирать?</h1>
-    ${hasMap ? `<div class="map" id="routeMap"></div>` : ''}
-    <div class="list" id="stops"></div>
-    <div class="card" id="stopInfo" hidden></div>
-    <div class="card" id="todayBox"><div class="hint">Загрузка…</div></div>`;
+  const td = S.today = await api(`/routes/${id}/today?stopId=${S.stopId}`);
+  if (S.tab !== 'routes' || S.route !== id) return;
+  const open = td.trips.filter(t => t.open);
+  // Режим выбора остановки: утром пассажир выбирает, где его забрать; если утро уже ушло — где высадить вечером.
+  const mode = open.some(t => t.dir === 'Morning') ? 'morning' : 'evening';
 
-  const loadToday = async () => {
-    const box = document.getElementById('todayBox');
-    const td = S.today = await api(`/routes/${id}/today?stopId=${S.stopId}`);
-    if (!document.body.contains(box)) return;
-    const open = td.trips.filter(t => t.open);
-    if (!td.trips.length) {
-      box.innerHTML = `<div class="title">Сегодня рейсов нет</div><div class="hint">Запись откроется в рабочий день.</div>`;
-    } else if (!open.length) {
-      const mine = td.trips.some(t => t.mine);
-      box.innerHTML = mine
-        ? `<div class="title">Вы уже записаны на сегодня</div><div class="spacer"></div><button class="primary block" data-go="today">Моя поездка</button>`
-        : `<div class="title">На сегодня запись закрыта</div><div class="hint">Записаться можно не позже чем за 10 минут до посадки. Приходите завтра утром.</div>`;
-    } else {
-      box.innerHTML = `<div class="title">Поехать сегодня</div>
-        <div class="list" style="margin:8px 0">${open.map(t => `<div class="row"><span class="grow">${dirName(t.dir)}</span><b>${when(t)}</b></div>`).join('')}</div>
-        ${td.trips.some(t => t.mine) ? `<div class="hint" style="margin-bottom:8px">На ${td.trips.find(t => t.mine).dir === 'Morning' ? 'утро' : 'вечер'} вы уже записаны.</div>` : ''}
-        <button class="primary block" id="next" ${td.free ? '' : 'disabled'}>${td.free ? 'Дальше — выбрать место' : 'Мест нет'}</button>`;
-      document.getElementById('next')?.addEventListener('click', () => { tap(); S.step = 2; window.scrollTo(0, 0); renderRouteToday(r); });
-    }
-    box.querySelectorAll('[data-go]').forEach(b => b.onclick = () => { S.route = null; show(b.dataset.go); });
+  // Карточки рейсов: направление, точка сбора и время — явно, со статусом записи.
+  const tripRow = t => {
+    const morning = t.dir === 'Morning';
+    const st = r.stops.find(s => s.id === S.stopId);
+    const chip = t.mine ? '<span class="chip ok">вы записаны</span>' : t.cancelled ? '<span class="chip warn">отменён</span>'
+      : t.open ? '<span class="chip ok">запись открыта</span>' : '<span class="chip">запись закрыта</span>';
+    return `<div class="row" style="align-items:flex-start">
+      <div class="grow"><div class="title">${morning ? '🌅 Утро · из дома в офис' : '🌙 Вечер · из офиса домой'}</div>
+        <div class="hint">Точка сбора: <b>${esc(morning ? st?.name ?? '' : office?.name ?? '')}</b> в ${hm(t.board)}</div>
+        <div class="hint">${morning ? `В офисе ≈ ${hm(office?.morning)}` : `Высадка: ${esc(st?.name ?? '')} ≈ ${hm(st?.evening)}`}</div></div>
+      ${chip}</div>`;
   };
-  mountStopPicker(r, () => loadToday().catch(e => toast(e.message, false)));
-  await loadToday();
+
+  let html = `
+    <div class="steps g2"><i class="on"></i><i></i></div>
+    <div class="eyebrow">${esc(r.name)} · ${money(r.price)} за поездку</div><h1>Поездка сегодня</h1>
+    <div class="list" id="tripsBox">${td.trips.map(tripRow).join('')}</div>`;
+
+  if (!td.trips.length) {
+    html += `<div class="card"><div class="title">Сегодня рейсов нет</div><div class="hint">Запись откроется в рабочий день.</div></div>`;
+  } else if (!open.length) {
+    html += td.trips.some(t => t.mine)
+      ? `<div class="card"><div class="title">Вы уже записаны на сегодня</div><div class="spacer"></div><button class="primary block" data-go="today">Моя поездка</button></div>`
+      : `<div class="card"><div class="title">На сегодня запись закрыта</div><div class="hint">Записаться можно не позже чем за 10 минут до посадки. Приходите завтра утром.</div></div>`;
+  } else {
+    const hasMap = r.stops.some(s => s.lat != null && s.lng != null);
+    const eveningOnly = mode === 'evening';
+    html += `
+      <h2>${eveningOnly ? 'Где вас высадить?' : 'Где вас забрать утром?'}</h2>
+      ${eveningOnly && office ? `<div class="card">${stopNavHtml(office, 'Точка сбора · вечер')}</div>` : ''}
+      ${hasMap ? `<div class="map" id="routeMap"></div>` : ''}
+      <div class="list" id="stops"></div>
+      <div class="card" id="stopInfo" hidden></div>
+      ${!eveningOnly && open.some(t => t.dir === 'Evening') && office
+        ? `<div class="hint" style="padding:0 4px 12px">Вечером обратно — от офиса «${esc(office.name)}» в ${hm(open.find(t => t.dir === 'Evening').board)}, высадим на этой же остановке.</div>` : ''}
+      <button class="primary block" id="next" ${td.free ? '' : 'disabled'}>${td.free ? 'Дальше — выбрать место' : 'Мест нет'}</button>`;
+  }
+  $view.innerHTML = html;
+  bindNav($view);
+  $view.querySelectorAll('[data-go]').forEach(b => b.onclick = () => { S.route = null; show(b.dataset.go); });
+  if (!open.length) return;
+
+  document.getElementById('next').onclick = () => { tap(); S.step = 2; window.scrollTo(0, 0); renderRouteToday(r); };
+  // Смена остановки меняет время посадки (и может закрыть утро) — обновляем карточки рейсов, а при смене режима — весь экран.
+  mountStopPicker(r, async () => {
+    try {
+      const fresh = S.today = await api(`/routes/${id}/today?stopId=${S.stopId}`);
+      const freshMode = fresh.trips.some(t => t.open && t.dir === 'Morning') ? 'morning' : 'evening';
+      if (freshMode !== mode || !fresh.trips.some(t => t.open)) return renderRouteToday(r);
+      document.getElementById('tripsBox').innerHTML = fresh.trips.map(tripRow).join('');
+      const btn = document.getElementById('next');
+      btn.disabled = !fresh.free; btn.textContent = fresh.free ? 'Дальше — выбрать место' : 'Мест нет';
+    } catch (e) { toast(e.message, false); }
+  }, mode);
 }
 
 async function renderOneOff(id) {
