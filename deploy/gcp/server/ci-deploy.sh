@@ -38,7 +38,7 @@ main() {
   bash "$DIR/install.sh" </dev/null
 
   # Старый образ после загрузки нового остаётся без тега — убираем, диск маленький.
-  sudo docker image prune -f >/dev/null 2>&1 || true
+  docker image prune -f >/dev/null 2>&1 || sudo -n docker image prune -f >/dev/null 2>&1 || true
 
   if curl -fsS -m 5 http://127.0.0.1:8080/health >/dev/null 2>&1; then
     echo "✔ Обновлено до версии $(cat "$DIR/VERSION" 2>/dev/null || echo '?')"

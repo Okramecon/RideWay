@@ -5,7 +5,7 @@
 set -euo pipefail
 
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-if [ "$(id -u)" -eq 0 ]; then SUDO=""; else SUDO="sudo"; fi
+if [ "$(id -u)" -eq 0 ] || docker info >/dev/null 2>&1; then SUDO=""; else SUDO="sudo"; fi
 mkdir -p "$DIR/backups"
 STAMP="$(date +%F)"
 

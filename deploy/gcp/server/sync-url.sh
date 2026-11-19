@@ -6,7 +6,7 @@ set -euo pipefail
 
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$DIR"
-if [ "$(id -u)" -eq 0 ]; then SUDO=""; else SUDO="sudo"; fi
+if [ "$(id -u)" -eq 0 ] || docker info >/dev/null 2>&1; then SUDO=""; else SUDO="sudo"; fi
 # Постоянный туннель (TUNNEL_TOKEN) — адрес свой и не меняется, следить не за чем.
 grep -qE '^TUNNEL_TOKEN=.+' .env 2>/dev/null && exit 0
 

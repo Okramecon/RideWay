@@ -10,9 +10,14 @@ say() { printf '\n\033[1;32m▶ %s\033[0m\n' "$*"; }
 warn() { printf '\033[1;33m! %s\033[0m\n' "$*"; }
 
 if [ "$(id -u)" -eq 0 ]; then SUDO=""; else SUDO="sudo"; fi
+# Docker без sudo, если пользователь в группе docker: так работает автообновление из CI,
+# где sudo может требовать пароль. Иначе — через sudo (первая установка из SSH-окна).
+DOCKER="$SUDO docker"
+pick_docker() { if docker info >/dev/null 2>&1; then DOCKER="docker"; else DOCKER="$SUDO docker"; fi; }
+pick_docker
 # Профиль туннеля: быстрый (адрес *.trycloudflare.com) или постоянный, если в .env задан TUNNEL_TOKEN.
 PROFILE="tunnel"
-dc() { $SUDO docker compose --profile "$PROFILE" "$@"; }
+dc() { $DOCKER compose --profile "$PROFILE" "$@"; }
 
 # ── 1. Подкачка: у e2-micro 1 ГБ памяти, 2 ГБ swap страхуют от нехватки ──
 # /proc/swaps, а не swapon --show: у обычного пользователя Debian /usr/sbin нет в PATH, и swapon «не находится».
@@ -26,7 +31,8 @@ if [ "$(wc -l < /proc/swaps)" -le 1 ] && [ ! -f /swapfile ]; then
 fi
 
 # ── 2. Docker из официального репозитория Docker ──
-if ! command -v docker >/dev/null 2>&1 || ! $SUDO docker compose version >/dev/null 2>&1; then
+# docker compose version не обращается к демону — sudo для проверки не нужен.
+if ! command -v docker >/dev/null 2>&1 || ! docker compose version >/dev/null 2>&1; then
   say "Устанавливаю Docker"
   # shellcheck disable=SC1091
   . /etc/os-release
@@ -45,14 +51,22 @@ if ! command -v docker >/dev/null 2>&1 || ! $SUDO docker compose version >/dev/n
     echo '{ "log-driver": "json-file", "log-opts": { "max-size": "10m", "max-file": "3" } }' | $SUDO tee /etc/docker/daemon.json >/dev/null
     $SUDO systemctl restart docker
   fi
+  pick_docker
+fi
+# Группа docker — чтобы автообновление из CI работало без sudo. Действует со следующего входа по SSH.
+# sudo -n: без пароля или никак — в CI спрашивать некому.
+if [ -n "$SUDO" ] && ! id -nG | tr ' ' '\n' | grep -qx docker; then
+  if sudo -n usermod -aG docker "$(id -un)" 2>/dev/null; then
+    say "Добавил $(id -un) в группу docker (для автообновления из CI)"
+  fi
 fi
 
 # ── 3. Образ приложения ──
 if [ -f rideway-image.tar ]; then
   say "Загружаю образ приложения"
-  $SUDO docker load -i rideway-image.tar
+  $DOCKER load -i rideway-image.tar
   rm -f rideway-image.tar            # место на диске; при обновлении придёт новый
-elif ! $SUDO docker image inspect rideway-gohome:latest >/dev/null 2>&1; then
+elif ! $DOCKER image inspect rideway-gohome:latest >/dev/null 2>&1; then
   echo "Нет файла rideway-image.tar рядом со скриптом. Соберите пакет на компьютере (deploy/gcp/pack.ps1) и загрузите его." >&2
   exit 1
 fi
@@ -78,7 +92,7 @@ fi
 # ── 5. Запуск ──
 if grep -qE '^TUNNEL_TOKEN=.+' .env; then
   PROFILE="tunnel-named"
-  $SUDO docker compose --profile tunnel stop tunnel >/dev/null 2>&1 || true
+  $DOCKER compose --profile tunnel stop tunnel >/dev/null 2>&1 || true
   say "Запускаю приложение и постоянный туннель Cloudflare (TUNNEL_TOKEN)"
 else
   say "Запускаю приложение и быстрый туннель Cloudflare"
@@ -102,15 +116,17 @@ if [ "$PROFILE" = "tunnel" ]; then
 fi
 
 # ── 7. Расписание: проверка адреса туннеля и ежедневный бэкап ──
-$SUDO mkdir -p /etc/cron.d
-$SUDO tee /etc/cron.d/rideway >/dev/null <<EOF
-# RideWay: адрес быстрого туннеля меняется при перезапуске — обновляем PUBLIC_URL; бэкап базы в 03:30.
+CRON="# RideWay: адрес быстрого туннеля меняется при перезапуске — обновляем PUBLIC_URL; бэкап базы в 03:30.
 SHELL=/bin/bash
 */2 * * * * root bash $DIR/sync-url.sh >/dev/null 2>&1
 @reboot     root sleep 60 && bash $DIR/sync-url.sh >/dev/null 2>&1
-30 3 * * *  root bash $DIR/backup.sh >/dev/null 2>&1
-EOF
-$SUDO chmod 644 /etc/cron.d/rideway
+30 3 * * *  root bash $DIR/backup.sh >/dev/null 2>&1"
+# Пишем, только если расписание изменилось: при автообновлении из CI sudo может быть недоступен.
+if [ "$(cat /etc/cron.d/rideway 2>/dev/null)" != "$CRON" ]; then
+  $SUDO mkdir -p /etc/cron.d
+  printf '%s\n' "$CRON" | $SUDO tee /etc/cron.d/rideway >/dev/null
+  $SUDO chmod 644 /etc/cron.d/rideway
+fi
 
 # ── 8. Проверка ──
 HEALTH="не отвечает — смотрите логи"
