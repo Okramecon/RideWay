@@ -489,3 +489,4 @@ $RECYCLE.BIN/
 CodeCoverage/
 .claude/
 uploads/
+deploy/gcp/out/

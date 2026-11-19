@@ -37,6 +37,9 @@ public class SystemClock : IClock
         catch (TimeZoneNotFoundException) { _tz = TimeZoneInfo.CreateCustomTimeZone("UTC+6", TimeSpan.FromHours(6), "UTC+6", "UTC+6"); }
     }
 
-    public DateTime UtcNow => DateTime.UtcNow;
-    public DateTime LocalNow => TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, _tz);
+    /// <summary>Сдвиг часов для локальной проверки (Dev:Now, только Development): время идёт как обычно, но от заданного момента.</summary>
+    public TimeSpan Offset { get; set; }
+
+    public DateTime UtcNow => DateTime.UtcNow + Offset;
+    public DateTime LocalNow => TimeZoneInfo.ConvertTimeFromUtc(UtcNow, _tz);
 }

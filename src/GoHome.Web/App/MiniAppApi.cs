@@ -25,12 +25,17 @@ public static class MiniAppApi
     public record DriverTripRef(int RouteId, DateOnly Date, Direction Dir);
     public record MarkRequest(int RouteId, DateOnly Date, Direction Dir, int UserId, RideResult Result);
     public record CancelRequest(int RouteId, DateOnly Date, Direction Dir, string? Reason);
+    public record LateRequest(DateOnly Date, Direction Dir, int Minutes);
+    public record OneOffCancelRequest(int BookingId);
+    public record SurveyRequest(string Kind, Dictionary<string, string>? Answers);
+    public record DelayRequest(int RouteId, DateOnly Date, Direction Dir, int Minutes);
+    public record DriverPaymentRequest(int RouteId, int UserId, decimal Amount);
 
     public static void MapMiniAppApi(this WebApplication app)
     {
         var api = app.MapGroup("/api/app").AllowAnonymous().AddEndpointFilter(AuthFilter);
 
-        api.MapGet("/me", async (HttpContext ctx, AppDbContext db, BillingService billing, BotInfo bot) =>
+        api.MapGet("/me", async (HttpContext ctx, AppDbContext db, BillingService billing, BotInfo bot, IClock clock) =>
         {
             var u = Current(ctx);
             var m = await db.Memberships.Include(x => x.Route).Include(x => x.Stop)
@@ -48,6 +53,8 @@ public static class MiniAppApi
                 due = Math.Max(0, balance.Due),
                 isDriver = drives,
                 botUsername = bot.Username,
+                // Местное время сервера: по нему приложение считает «через N минут», даже если часы телефона сбиты.
+                serverNow = clock.LocalNow.ToString("yyyy-MM-ddTHH:mm:ss"),
             });
         });
 
@@ -128,24 +135,86 @@ public static class MiniAppApi
         api.MapPost("/membership/leave", async (HttpContext ctx, BookingService booking) =>
             Result(await booking.LeaveRouteAsync(Current(ctx).Id, Actor(ctx))));
 
-        api.MapGet("/trips", async (HttpContext ctx, TripService trips, WorkCalendar calendar, IClock clock) =>
+        api.MapGet("/trips", async (HttpContext ctx, TripService trips, TripOpsService ops, WorkCalendar calendar, IClock clock) =>
         {
             var u = Current(ctx);
             var upcoming = await trips.GetUserUpcomingAsync(u.Id, days: 5);
-            return upcoming.Select(x =>
+            var list = new List<object>();
+            foreach (var (t, e) in upcoming)
             {
-                var (t, e) = x;
                 var time = t.Direction == Direction.Morning ? e.Stop.MorningTime : e.Stop.EveningTime;
-                return new
+                var isToday = t.Date == clock.Today;
+                list.Add(new
                 {
                     routeId = t.Route.Id, route = t.Route.Name, t.Date, dir = t.Direction,
                     label = $"{WorkCalendar.Format(t.Date)}, {WorkCalendar.Format(t.Direction)}",
-                    isToday = t.Date == clock.Today,
-                    time, stop = e.Stop.Name, seat = e.SeatNumber, e.IsRegular, e.IsAbsent, t.IsCancelled, e.Result,
+                    isToday,
+                    time, departure = t.DepartureTime, price = t.Route.PricePerRide,
+                    stop = e.Stop.Name, stopNote = e.Stop.Note, stopLat = e.Stop.Lat, stopLng = e.Stop.Lng,
+                    seat = e.SeatNumber, e.IsRegular, e.IsAbsent, t.IsCancelled, e.Result, bookingId = e.OneOffBookingId,
                     canChange = !t.IsCancelled && calendar.CanChange(t.Date),
+                    departed = isToday && await ops.IsDepartedAsync(t.Route.Id, t.Date, t.Direction),
+                    arrived = t.ArrivedAt is not null,
                     driver = t.Route.Car.Driver?.Name, driverPhone = t.Route.Car.Driver?.Phone, car = $"{t.Route.Car.Model} {t.Route.Car.Plate}",
-                };
+                });
+            }
+            return list;
+        });
+
+        // Неделя пассажира: 5 ближайших рабочих дней × утро/вечер на его маршруте — своя поездка или свободные места.
+        api.MapGet("/week", async (HttpContext ctx, int? routeId, AppDbContext db, TripService trips, WorkCalendar calendar, IClock clock) =>
+        {
+            var u = Current(ctx);
+            var today = clock.Today;
+            var id = routeId
+                ?? await db.Memberships.Where(m => m.UserId == u.Id && m.Status == MembershipStatus.Regular && m.To == null)
+                    .Select(m => (int?)m.RouteId).FirstOrDefaultAsync()
+                ?? await db.OneOffBookings.Where(b => b.UserId == u.Id && b.Status == BookingStatus.Booked && b.Date >= today)
+                    .OrderBy(b => b.Date).Select(b => (int?)b.RouteId).FirstOrDefaultAsync()
+                ?? await db.Routes.Where(r => r.IsActive).OrderBy(r => r.Name).Select(r => (int?)r.Id).FirstOrDefaultAsync();
+            var route = id is null ? null : await db.Routes.FirstOrDefaultAsync(r => r.Id == id && r.IsActive);
+            if (route is null) return Results.Ok(new { routeId = (int?)null, route = "", price = 0m, days = Array.Empty<object>() });
+
+            var days = new List<object>();
+            foreach (var date in calendar.Workdays(today, today.AddDays(30)).Take(5))
+            {
+                var cells = new List<object>();
+                foreach (var dir in Enum.GetValues<Direction>())
+                {
+                    var t = await trips.GetRosterAsync(route.Id, date, dir);
+                    var e = t.Entries.FirstOrDefault(x => x.UserId == u.Id);
+                    cells.Add(new
+                    {
+                        dir, runs = t.Runs, t.IsCancelled, canChange = !t.IsCancelled && calendar.CanChange(date), free = t.Free,
+                        departure = t.DepartureTime,
+                        time = e is null ? (TimeOnly?)null : dir == Direction.Morning ? e.Stop.MorningTime : e.Stop.EveningTime,
+                        mine = e is not null, isRegular = e?.IsRegular ?? false, isAbsent = e?.IsAbsent ?? false,
+                        result = e?.Result, seat = e?.SeatNumber, bookingId = e?.OneOffBookingId,
+                    });
+                }
+                days.Add(new { date, label = WorkCalendar.Format(date), isToday = date == today, cells });
+            }
+            return Results.Ok(new { routeId = (int?)route.Id, route = route.Name, price = route.PricePerRide, days });
+        });
+
+        api.MapPost("/oneoff/cancel", async (HttpContext ctx, OneOffCancelRequest r, BookingService booking) =>
+            Result(await booking.CancelOneOffAsync(r.BookingId, Current(ctx).Id, Actor(ctx))));
+
+        api.MapPost("/late", async (HttpContext ctx, LateRequest r, TripOpsService ops) =>
+            Result(await ops.NotifyLateAsync(Current(ctx).Id, r.Date, r.Dir, r.Minutes)));
+
+        // Короткие опросы (лист ожидания, интерес к абонементу). Отдельной таблицы пока нет — ответы пишем в журнал, раздел «Survey».
+        api.MapPost("/survey", async (HttpContext ctx, SurveyRequest r, AuditService audit) =>
+        {
+            if (!System.Text.RegularExpressions.Regex.IsMatch(r.Kind ?? "", "^[a-z_]{1,32}$")) return Results.BadRequest();
+            var answers = (r.Answers ?? []).Take(10)
+                .ToDictionary(kv => kv.Key.Length > 32 ? kv.Key[..32] : kv.Key, kv => kv.Value is { Length: > 100 } v ? v[..100] : kv.Value ?? "");
+            var json = System.Text.Json.JsonSerializer.Serialize(answers, new System.Text.Json.JsonSerializerOptions
+            {
+                Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
             });
+            await audit.LogAsync("Survey", Current(ctx).Id, r.Kind!, json, Actor(ctx));
+            return Result(OpResult.Success("Спасибо, записали."));
         });
 
         api.MapPost("/absence", async (HttpContext ctx, TripRef r, BookingService booking) =>
@@ -186,18 +255,22 @@ public static class MiniAppApi
                 .OrderBy(r => r.Name).Select(r => new { r.Id, r.Name }).ToListAsync();
         });
 
-        driver.MapGet("/trip", async (HttpContext ctx, int routeId, DateOnly? date, Direction? dir, TripService trips, IClock clock, AppDbContext db) =>
+        driver.MapGet("/trip", async (HttpContext ctx, int routeId, DateOnly? date, Direction? dir, TripService trips, TripOpsService ops, BillingService billing, IClock clock, AppDbContext db) =>
         {
             if (!await CanDriveAsync(ctx, db, routeId)) return Results.Forbid();
             var d = date ?? clock.Today;
             var direction = dir ?? (clock.LocalNow.Hour < 13 ? Direction.Morning : Direction.Evening);
             var t = await trips.GetRosterAsync(routeId, d, direction);
+            var dues = new Dictionary<int, decimal>();
+            foreach (var e in t.Entries) dues[e.UserId] = Math.Max(0, (await billing.GetBalanceAsync(e.UserId)).Due);
             return Results.Ok(new
             {
                 routeId, route = t.Route.Name, date = d, dir = direction,
                 label = $"{WorkCalendar.Format(d)}, {WorkCalendar.Format(direction)}",
                 t.IsWorkday, t.IsCancelled, reason = t.Cancellation?.Reason, t.Capacity, t.Occupied,
                 departure = t.DepartureTime, arrivedAt = t.ArrivedAt, isToday = d == clock.Today, canMark = d <= clock.Today,
+                departed = d == clock.Today && await ops.IsDepartedAsync(routeId, d, direction),
+                price = t.Route.PricePerRide,
                 photo = CarService.PhotoUrl(t.Route.Car),
                 // Карта рейса: линия маршрута и остановки; passengers — сколько человек садится/выходит на остановке в этот рейс.
                 map = new
@@ -206,16 +279,34 @@ public static class MiniAppApi
                     stops = t.Route.Stops.OrderBy(s => s.Order).Select(s => new
                     {
                         s.Id, s.Order, s.Name, s.Note, s.Lat, s.Lng, passengers = t.Riding.Count(e => e.Stop.Id == s.Id),
+                        time = direction == Direction.Morning ? s.MorningTime : s.EveningTime,
                     }),
                 },
                 layout = Grid(t.Layout, n => t.SeatOwners.TryGetValue(n, out var o) ? ("taken", ShortName(o.Name)) : ("free", null)),
                 passengers = t.Entries.Select(e => new
                 {
-                    e.UserId, e.Name, e.Phone, stop = e.Stop.Name, stopLat = e.Stop.Lat, stopLng = e.Stop.Lng, seat = e.SeatNumber,
+                    e.UserId, e.Name, e.Phone, stop = e.Stop.Name, stopId = e.Stop.Id, stopLat = e.Stop.Lat, stopLng = e.Stop.Lng, seat = e.SeatNumber,
                     time = direction == Direction.Morning ? e.Stop.MorningTime : e.Stop.EveningTime,
-                    e.IsRegular, e.IsAbsent, e.Result,
+                    e.IsRegular, e.IsAbsent, e.Result, due = dues[e.UserId],
                 }),
             });
+        });
+
+        driver.MapPost("/depart", async (HttpContext ctx, DriverTripRef r, TripOpsService ops, AppDbContext db) =>
+            await CanDriveAsync(ctx, db, r.RouteId) ? Result(await ops.DepartAsync(r.RouteId, r.Date, r.Dir, Actor(ctx))) : Results.Forbid());
+
+        driver.MapPost("/delay", async (HttpContext ctx, DelayRequest r, TripOpsService ops, AppDbContext db) =>
+            await CanDriveAsync(ctx, db, r.RouteId) ? Result(await ops.NotifyDelayAsync(r.RouteId, r.Date, r.Dir, r.Minutes, Actor(ctx))) : Results.Forbid());
+
+        // Водитель принял наличные: не больше долга и только от того, кто ездил на его маршруте.
+        driver.MapPost("/payment", async (HttpContext ctx, DriverPaymentRequest r, BillingService billing, AppDbContext db) =>
+        {
+            if (!await CanDriveAsync(ctx, db, r.RouteId)) return Results.Forbid();
+            if (!await db.RideLogs.AnyAsync(l => l.RouteId == r.RouteId && l.UserId == r.UserId))
+                return Result(OpResult.Fail("Этот пассажир не ездил на вашем маршруте."));
+            var due = (await billing.GetBalanceAsync(r.UserId)).Due;
+            if (r.Amount <= 0 || r.Amount > due) return Result(OpResult.Fail($"Сумма должна быть от 1 до {due:0} сом."));
+            return Result(await billing.RecordPaymentAsync(r.UserId, r.Amount, PaymentMethod.Cash, Current(ctx).Name, "принял водитель в приложении", Actor(ctx)));
         });
 
         // ───── машина водителя: схема мест и фото салона ─────
@@ -295,6 +386,23 @@ public static class MiniAppApi
         && !http.Request.Headers.ContainsKey("CF-Connecting-IP")
         && !http.Request.Headers.ContainsKey("CF-Ray");
 
+    /// <summary>
+    /// То же для локальной проверки в Docker или с телефона в той же Wi‑Fi: запрос из частной сети (10/8, 172.16/12, 192.168/16) без заголовков прокси.
+    /// Включается только явно: Development + Dev:AllowPrivateNetwork=true.
+    /// </summary>
+    public static bool IsDirectPrivateRequest(HttpContext http)
+    {
+        if (http.Request.Headers.ContainsKey("X-Forwarded-For") || http.Request.Headers.ContainsKey("CF-Connecting-IP") || http.Request.Headers.ContainsKey("CF-Ray"))
+            return false;
+        var ip = http.Connection.RemoteIpAddress;
+        if (ip is null) return false;
+        if (System.Net.IPAddress.IsLoopback(ip)) return true;
+        if (ip.IsIPv4MappedToIPv6) ip = ip.MapToIPv4();
+        if (ip.AddressFamily != System.Net.Sockets.AddressFamily.InterNetwork) return false;
+        var b = ip.GetAddressBytes();
+        return b[0] == 10 || (b[0] == 172 && b[1] >= 16 && b[1] <= 31) || (b[0] == 192 && b[1] == 168);
+    }
+
     private static IResult Result(OpResult r) => Results.Ok(new { ok = r.Ok, message = r.Message });
 
     /// <summary>Сетка салона для рисования: у каждой ячейки тип, номер места, состояние (free/taken/mine) и подпись.</summary>
@@ -339,7 +447,9 @@ public static class MiniAppApi
         var auth = http.Request.Headers.Authorization.ToString();
         if (auth.StartsWith("tma ", StringComparison.Ordinal))
             telegramId = TelegramInitData.Validate(auth[4..], token, DateTimeOffset.UtcNow, TimeSpan.FromDays(1))?.UserId;
-        else if (env.IsDevelopment() && IsDirectLocalRequest(http) && long.TryParse(http.Request.Headers["X-Dev-User"], out var devId))
+        else if (env.IsDevelopment() && long.TryParse(http.Request.Headers["X-Dev-User"], out var devId)
+                 && (IsDirectLocalRequest(http)
+                     || (sp.GetRequiredService<IConfiguration>().GetValue<bool>("Dev:AllowPrivateNetwork") && IsDirectPrivateRequest(http))))
             telegramId = devId;
 
         if (telegramId is null)

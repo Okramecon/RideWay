@@ -18,7 +18,15 @@ services.Configure<BotOptions>(config.GetSection(BotOptions.Section));
 
 services.AddDbContext<AppDbContext>(o => o.UseSqlite(config.GetConnectionString("Default") ?? "Data Source=gohome.db"));
 
-services.AddSingleton<IClock, SystemClock>();
+services.AddSingleton<IClock>(sp =>
+{
+    var clock = new SystemClock(sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<PilotOptions>>());
+    // Локальная проверка: Dev:Now = "2026-11-16T07:20" — приложение живёт так, будто сейчас этот момент (например, утро буднего дня).
+    if (builder.Environment.IsDevelopment()
+        && DateTime.TryParse(config["Dev:Now"], System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out var fakeNow))
+        clock.Offset = fakeNow - clock.LocalNow;
+    return clock;
+});
 services.AddScoped<WorkCalendar>();
 services.AddScoped<AuditService>();
 services.AddScoped<TripService>();

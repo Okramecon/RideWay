@@ -41,6 +41,19 @@ dotnet user-secrets --project src/GoHome.Web set "App:PublicUrl" "https://….tr
 
 Отладка интерфейса в обычном браузере (только Development): `http://localhost:5111/app/?dev=<telegramId>` — подставляет пользователя с этим Telegram ID без подписи Telegram.
 
+### Локальная проверка в Docker (без Telegram и туннеля)
+
+```bash
+docker compose -f docker-compose.dev.yml up -d --build
+```
+
+- Mini App: `http://localhost:8081/app/?dev=1001` — пассажир без записи; `1002`–`1004` — уже ездят; `2001` — водитель «Тунгуч → Офис».
+- Админка: `http://localhost:8081`, пароль `admin`.
+- Часы приложения сдвинуты на понедельник 07:15 (`DEV_NOW`), чтобы рейс можно было пройти целиком. Сдвиг считается от момента запуска контейнера.
+- Бот выключен, его сообщения пишутся в лог: `docker compose -f docker-compose.dev.yml logs -f gohome-dev`.
+- `Dev:AllowPrivateNetwork` пускает `?dev=` из частной сети — можно открыть с телефона в той же Wi‑Fi по IP компьютера.
+- Данные — в отдельном томе; сбросить демо: `docker compose -f docker-compose.dev.yml down -v`.
+
 ## Места в салоне
 
 - У каждой машины есть **схема мест**: сетка до 8×5 с рулём и пронумерованными сиденьями (по умолчанию — седан «руль, место 1 впереди, ряд 2-3-4»).
@@ -91,8 +104,11 @@ cp .env.example .env   # задать ADMIN_PASSWORD, BOT_TOKEN, PUBLIC_URL (htt
 docker compose up -d --build
 ```
 
-Порт 8080. БД и ключи cookie — в томе `gohome-data` (`/data`). Бэкап — скопировать `/data/gohome.db`.
+Порт 8080 (только с этой машины). БД и ключи cookie — в томе `rideway_gohome-data` (`/data`). Бэкап — скопировать `/data/gohome.db`.
 Перед контейнером нужен HTTPS (Caddy/nginx или Cloudflare Tunnel): без него Mini App не откроется.
+Туннель Cloudflare: `docker compose --profile tunnel up -d` (быстрый) или `--profile tunnel-named` (свой домен, `TUNNEL_TOKEN`).
+
+Бесплатный сервер Google Cloud (e2-micro) одной командой — [deploy/gcp/README.md](deploy/gcp/README.md).
 
 ## Первый запуск пилота
 

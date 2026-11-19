@@ -51,6 +51,23 @@ public class MiniAppTests
     public void Board_code_is_extracted_from_qr_text(string text, string? expected) =>
         Assert.Equal(expected, MiniAppApi.ExtractBoardCode(text));
 
+    [Theory]
+    [InlineData("127.0.0.1", null, true)]
+    [InlineData("172.17.0.1", null, true)]          // шлюз Docker
+    [InlineData("192.168.1.20", null, true)]        // телефон в той же Wi‑Fi
+    [InlineData("10.0.0.5", null, true)]
+    [InlineData("172.32.0.1", null, false)]         // уже не частная сеть
+    [InlineData("8.8.8.8", null, false)]
+    [InlineData("172.18.0.3", "CF-Ray", false)]      // пришло через туннель Cloudflare
+    [InlineData("192.168.1.20", "X-Forwarded-For", false)]
+    public void Dev_login_from_private_network_only_without_proxy_headers(string ip, string? header, bool expected)
+    {
+        var http = new Microsoft.AspNetCore.Http.DefaultHttpContext();
+        http.Connection.RemoteIpAddress = System.Net.IPAddress.Parse(ip);
+        if (header is not null) http.Request.Headers[header] = "x";
+        Assert.Equal(expected, MiniAppApi.IsDirectPrivateRequest(http));
+    }
+
     [Fact]
     public async Task Qr_boarding_marks_ride_only_in_window_and_for_roster_passengers()
     {

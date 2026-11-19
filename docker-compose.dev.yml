@@ -1,0 +1,29 @@
+# Локальная проверка без Telegram: демо-данные, вход по ?dev=<telegramId>, бот выключен (уведомления пишутся в лог).
+#   docker compose -f docker-compose.dev.yml up -d --build
+#   Mini App:  http://localhost:8081/app/?dev=1001   (1001 — пассажир без записи, 1002–1004 — уже ездят, 2001 — водитель «Тунгуч → Офис»)
+#   Админка:   http://localhost:8081  (пароль admin)
+#   Сообщения бота: docker compose -f docker-compose.dev.yml logs -f gohome-dev
+# Данные — в отдельном томе gohome-dev-data, рабочую базу не трогают. Сбросить демо: docker compose -f docker-compose.dev.yml down -v
+name: rideway-dev
+
+services:
+  gohome-dev:
+    build: .
+    ports:
+      - "8081:8080"
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      SeedDemoData: "true"
+      Admin__Password: admin
+      App__PublicUrl: http://localhost:8081
+      Bot__Token: ""
+      # Вход ?dev= разрешён не только с localhost, но и из частной сети: из Docker и с телефона в той же Wi‑Fi.
+      Dev__AllowPrivateNetwork: "true"
+      # Часы приложения: сегодня 15.11 — воскресенье, рейсов нет. Ставим утро понедельника, чтобы проверить рейс целиком.
+      # Уберите строку — будет реальное время.
+      Dev__Now: ${DEV_NOW:-2026-11-16T07:15}
+    volumes:
+      - gohome-dev-data:/data
+
+volumes:
+  gohome-dev-data:

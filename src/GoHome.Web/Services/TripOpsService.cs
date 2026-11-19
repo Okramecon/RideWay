@@ -112,6 +112,78 @@ public class TripOpsService(
         return (OpResult.Success($"Рейс отменён, уведомлено пассажиров: {affected.Count(e => e.TelegramId is not null)} из {affected.Count}."), affected);
     }
 
+    // ───── выезд, задержка, опоздание ─────
+    // Отдельной таблицы «рейс» нет, поэтому факт выезда храним записью в журнале: (TripStart, маршрут, «дата|направление»).
+    public const string StartEntity = "TripStart";
+    public static string TripKey(DateOnly date, Direction dir) => $"{date:yyyy-MM-dd}|{dir}";
+
+    public Task<bool> IsDepartedAsync(int routeId, DateOnly date, Direction dir)
+    {
+        var key = TripKey(date, dir);
+        return db.AuditLogs.AnyAsync(a => a.Entity == StartEntity && a.EntityId == routeId && a.Details == key);
+    }
+
+    /// <summary>Водитель выехал: отмечаем и сообщаем всем, кто едет этим рейсом.</summary>
+    public async Task<OpResult> DepartAsync(int routeId, DateOnly date, Direction dir, string actor)
+    {
+        if (date != clock.Today) return OpResult.Fail("Выезд отмечается только в день рейса.");
+        var roster = await trips.GetRosterAsync(routeId, date, dir);
+        if (!roster.Runs) return OpResult.Fail(roster.IsCancelled ? "Рейс отменён." : "Сегодня рейса нет.");
+        if (await IsDepartedAsync(routeId, date, dir)) return OpResult.Success("Выезд уже отмечен.");
+
+        await audit.LogAsync(StartEntity, routeId, "Depart", TripKey(date, dir), actor);
+        var notified = 0;
+        foreach (var e in roster.Riding.Where(e => e.TelegramId is not null))
+        {
+            var where = dir == Direction.Morning
+                ? $"Будет на остановке «{e.Stop.Name}» около {Hm(e.Stop.MorningTime)}."
+                : $"Выезд от офиса в {Hm(roster.DepartureTime ?? e.Stop.EveningTime)}.";
+            await notifier.SendAsync(e.TelegramId!.Value, $"🚗 Водитель выехал: «{roster.Route.Name}», {WorkCalendar.Format(dir)}.\n{where}");
+            notified++;
+        }
+        return OpResult.Success($"Выезд отмечен, пассажиров уведомлено: {notified}.");
+    }
+
+    /// <summary>Водитель задерживается — предупреждаем пассажиров рейса.</summary>
+    public async Task<OpResult> NotifyDelayAsync(int routeId, DateOnly date, Direction dir, int minutes, string actor)
+    {
+        if (date != clock.Today) return OpResult.Fail("Сообщить о задержке можно только в день рейса.");
+        minutes = Math.Clamp(minutes, 1, 60);
+        var roster = await trips.GetRosterAsync(routeId, date, dir);
+        if (!roster.Runs) return OpResult.Fail("Сегодня рейса нет.");
+        await audit.LogAsync("TripDelay", routeId, "Delay", $"{TripKey(date, dir)} +{minutes}", actor);
+        var notified = 0;
+        foreach (var e in roster.Riding.Where(e => e.TelegramId is not null))
+        {
+            await notifier.SendAsync(e.TelegramId!.Value,
+                $"⏱ «{roster.Route.Name}», {WorkCalendar.Format(dir)}: водитель задерживается примерно на {minutes} мин.");
+            notified++;
+        }
+        return OpResult.Success($"Пассажиры предупреждены о задержке на {minutes} мин: {notified}.");
+    }
+
+    /// <summary>Пассажир опаздывает к машине — сообщаем водителю его рейса.</summary>
+    public async Task<OpResult> NotifyLateAsync(int userId, DateOnly date, Direction dir, int minutes)
+    {
+        if (date != clock.Today) return OpResult.Fail("Предупредить можно только в день поездки.");
+        minutes = Math.Clamp(minutes, 1, 15);
+        var routeIds = await db.Routes.Where(r => r.IsActive).Select(r => r.Id).ToListAsync();
+        foreach (var routeId in routeIds)
+        {
+            var roster = await trips.GetRosterAsync(routeId, date, dir);
+            var entry = roster.Runs ? roster.Riding.FirstOrDefault(e => e.UserId == userId) : null;
+            if (entry is null) continue;
+            if (roster.Route.Car.Driver?.TelegramId is not { } chat)
+                return OpResult.Fail("Не получилось написать водителю — позвоните ему.");
+            await notifier.SendAsync(chat,
+                $"⏱ {entry.Name} опаздывает на ~{minutes} мин. Остановка «{entry.Stop.Name}»" + (entry.SeatNumber is { } s ? $", место {s}." : "."));
+            return OpResult.Success("Водитель предупреждён. Машина ждёт недолго — поторопитесь.");
+        }
+        return OpResult.Fail("У вас нет поездки на этот рейс.");
+    }
+
+    private static string Hm(TimeOnly t) => $"{t.Hour:00}:{t.Minute:00}";
+
     public async Task<OpResult> RestoreTripAsync(int routeId, DateOnly date, Direction dir, string actor)
     {
         var c = await db.TripCancellations.SingleOrDefaultAsync(x => x.RouteId == routeId && x.Date == date && x.Direction == dir);

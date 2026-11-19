@@ -1,15 +1,47 @@
+# Имя проекта фиксировано: от него зависит имя тома с базой (rideway_gohome-data), его использует backup.sh.
+name: rideway
+
 services:
   gohome:
     build: .
+    # На сервере образ не собирается, а загружается готовым (deploy/gcp/pack.ps1 → docker load).
+    image: rideway-gohome:latest
     restart: unless-stopped
+    # Только с этой машины: снаружи приложение доступно через туннель, порт наружу не открываем.
     ports:
-      - "8080:8080"
+      - "127.0.0.1:8080:8080"
     environment:
       Admin__Password: ${ADMIN_PASSWORD:?задайте ADMIN_PASSWORD в .env}
       Bot__Token: ${BOT_TOKEN:-}
       App__PublicUrl: ${PUBLIC_URL:-}
+      # Экономный сборщик мусора: на e2-micro всего 1 ГБ памяти.
+      DOTNET_gcServer: "0"
     volumes:
       - gohome-data:/data
+
+  # Быстрый туннель Cloudflare без аккаунта: docker compose --profile tunnel up -d
+  # Адрес https://….trycloudflare.com появится в логах (docker compose logs tunnel) и меняется при каждом перезапуске туннеля.
+  tunnel:
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    # --protocol http2: QUIC (UDP 7844) режется во многих сетях, тогда туннель не соединяется и отдаёт 530.
+    command: tunnel --no-autoupdate --protocol http2 --url http://gohome:8080
+    depends_on:
+      - gohome
+    profiles: ["tunnel"]
+
+  # Постоянный туннель на своём домене: создайте туннель в Cloudflare Zero Trust (Networks → Tunnels),
+  # укажите Public Hostname → http://gohome:8080, токен положите в .env как TUNNEL_TOKEN.
+  # Запуск: docker compose --profile tunnel-named up -d
+  tunnel-named:
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    command: tunnel --no-autoupdate --protocol http2 run
+    environment:
+      TUNNEL_TOKEN: ${TUNNEL_TOKEN:-}
+    depends_on:
+      - gohome
+    profiles: ["tunnel-named"]
 
 volumes:
   gohome-data:
